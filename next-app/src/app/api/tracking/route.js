@@ -5,7 +5,7 @@ import { getTracking, createTracking } from '@/lib/backend';
 export const dynamic = 'force-dynamic';
 
 // IT Team (and admins) manage the tracking list.
-const allowed = (u) => u.role === 'admin' || u.role === 'superadmin' || u.role === 'it_team';
+const allowed = (u) => u.role === 'admin' || u.role === 'superadmin' || u.role === 'dev' || u.role === 'it_team';
 
 export async function GET(request) {
   const user = getUserFromRequest(request);

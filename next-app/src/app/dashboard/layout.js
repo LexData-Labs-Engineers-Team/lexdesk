@@ -84,7 +84,7 @@ export default function DashboardLayout({ children }) {
   useEffect(() => {
     let stored;
     try { stored = JSON.parse(localStorage.getItem('user') || 'null'); } catch { stored = null; }
-    if (!stored || stored.role !== 'employee') return;
+    if (!stored || (stored.role !== 'employee' && stored.role !== 'dev')) return;
     const token = localStorage.getItem('token');
     if (!token) return;
     fetch('/api/teams', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })

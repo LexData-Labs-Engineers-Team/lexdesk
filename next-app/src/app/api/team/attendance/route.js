@@ -21,7 +21,7 @@ export async function POST(request) {
   }
 
   try {
-    const isAdmin = user.role === 'admin' || user.role === 'superadmin';
+    const isAdmin = user.role === 'admin' || user.role === 'superadmin' || user.role === 'dev';
     if (!isAdmin) {
       const teamsData = await getTeams(user.orgId);
       const myTeamIds = new Set(

@@ -18,7 +18,7 @@ export async function GET(request) {
 export async function POST(request) {
   const user = getUserFromRequest(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (user.role !== 'admin' && user.role !== 'superadmin') {
+  if (user.role !== 'admin' && user.role !== 'superadmin' && user.role !== 'dev') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
   let body;

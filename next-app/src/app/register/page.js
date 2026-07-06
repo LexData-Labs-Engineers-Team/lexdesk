@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { AuthDecor } from '@/components/authDecor';
 import RoboAssistant from '@/components/RoboAssistant';
+import { getOrCreateWebDeviceId, webDeviceName } from '@/lib/deviceId';
 
 const APP_DOWNLOAD_URL = process.env.NEXT_PUBLIC_APP_DOWNLOAD_URL;
 
@@ -73,7 +74,7 @@ function SignInForm({ onState }) {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, deviceId: getOrCreateWebDeviceId(), deviceName: webDeviceName() }),
       });
       const data = await res.json();
 

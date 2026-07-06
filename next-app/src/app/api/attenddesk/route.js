@@ -27,7 +27,7 @@ export async function GET(request) {
   const user = getUserFromRequest(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   // Org-wide reads: admins and the IT Team role; employees use /api/me/* routes.
-  if (user.role !== 'admin' && user.role !== 'superadmin' && user.role !== 'it_team') {
+  if (user.role !== 'admin' && user.role !== 'superadmin' && user.role !== 'dev' && user.role !== 'it_team') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

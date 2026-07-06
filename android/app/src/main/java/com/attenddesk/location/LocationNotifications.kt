@@ -13,7 +13,7 @@ import androidx.core.content.getSystemService
 object LocationNotifications {
     /** ENTER/EXIT geofence reminders. User-facing, dismissible. */
     const val CHANNEL_GEOFENCE = "location_geofence"
-    /** Persistent "AttendDesk is tracking your location" notification. */
+    /** Persistent "TeamOS is tracking your location" notification. */
     const val CHANNEL_CONTINUOUS = "location_continuous"
     /** Low-importance status/diagnostic notifications. */
     const val CHANNEL_STATUS = "location_status"
@@ -47,7 +47,7 @@ object LocationNotifications {
                     "Continuous location tracking",
                     NotificationManager.IMPORTANCE_LOW,
                 ).apply {
-                    description = "Shows while AttendDesk is recording your location for your employer."
+                    description = "Shows while TeamOS is recording your location for your employer."
                     setShowBadge(false)
                 },
             )

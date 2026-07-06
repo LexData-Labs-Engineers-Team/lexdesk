@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.Badge
+import androidx.compose.material.icons.outlined.Business
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Email
@@ -206,9 +207,10 @@ fun ProfileScreen(
                             Text(displayEmail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.height(6.dp))
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                // Role is shown in the Work tab; badge Admin/Dev here (not Employee).
                                 when (role ?: me?.role) {
                                     "ADMIN" -> StatusChip(text = "Admin", tone = ChipTone.Info)
-                                    "EMPLOYEE" -> StatusChip(text = "Employee", tone = ChipTone.Muted)
+                                    "DEV" -> StatusChip(text = "Dev", tone = ChipTone.Info)
                                     else -> {}
                                 }
                                 if (features.verify.face && enrolledAt != null) {
@@ -245,7 +247,11 @@ fun ProfileScreen(
                     }
                 } else {
                     SectionCard(title = "Work") {
+                        InfoRow(Icons.Outlined.Badge, "Designation", me?.designation?.takeIf { it.isNotBlank() } ?: "—")
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         InfoRow(Icons.Outlined.WorkOutline, "Role", (role ?: me?.role ?: "—").lowercase().replaceFirstChar { it.titlecase() })
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        InfoRow(Icons.Outlined.Business, "Department", me?.department?.takeIf { it.isNotBlank() } ?: "—")
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         InfoRow(
                             icon = Icons.Outlined.Face,

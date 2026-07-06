@@ -172,6 +172,15 @@ export function fmtTime(ms) {
 export const onlyEmployees = (employees) =>
   (employees || []).filter((e) => String(e.role || '').toUpperCase() === 'EMPLOYEE');
 
+// Org users managed like employees — EMPLOYEE + IT_TEAM. IT team members are
+// employees too but hidden by onlyEmployees; the directory uses this so admins
+// can open their profiles (device/IP login controls live there).
+export const onlyStaff = (employees) =>
+  (employees || []).filter((e) => {
+    const r = String(e.role || '').toUpperCase();
+    return r === 'EMPLOYEE' || r === 'IT_TEAM' || r === 'DEV';
+  });
+
 // Weekly day(s) off (0=Sun … 6=Sat). Friday (5) and Saturday (6) are the weekend.
 export const WEEKLY_OFF = [5, 6];
 

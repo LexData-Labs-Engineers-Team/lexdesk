@@ -113,7 +113,7 @@ fun PermissionsScreen(onGranted: () -> Unit) {
         ) {
             Text("Permissions", style = MaterialTheme.typography.titleLarge)
             Text(
-                "AttendDesk needs the following to verify you're physically at the office. " +
+                "TeamOS needs the following to verify you're physically at the office. " +
                     "We never upload your photo — only a numeric face vector.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -191,7 +191,7 @@ fun PermissionsScreen(onGranted: () -> Unit) {
                     buildString {
                         if (bgRequired) {
                             append("Your organization has enabled $modeName. ")
-                            append("Until you grant \"Allow all the time\", AttendDesk cannot read ")
+                            append("Until you grant \"Allow all the time\", TeamOS cannot read ")
                             append("your location while the app is closed and you may miss ")
                             append("auto check-ins or location audit entries. ")
                         } else {
@@ -201,7 +201,7 @@ fun PermissionsScreen(onGranted: () -> Unit) {
                         }
                         append(
                             "When enabled by your admin: latitude, longitude, accuracy, and a " +
-                                "timestamp are uploaded to AttendDesk and visible to your " +
+                                "timestamp are uploaded to TeamOS and visible to your " +
                                 "organization's administrators. You can grant or revoke this " +
                                 "permission at any time in Android Settings.",
                         )

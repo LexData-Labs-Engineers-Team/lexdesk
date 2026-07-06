@@ -11,7 +11,7 @@ import { setEmployeeRole } from './users';
 //                  role stays EMPLOYEE.
 //   - it:          a standalone account role (IT_TEAM), not tied to a department.
 export const DEPARTMENTS = ['Engineering', 'Marketing', 'Project'];
-const ROLES = ['team_leader', 'it'];
+const ROLES = ['team_leader', 'it', 'dev'];
 
 async function findOrCreateDeptTeam(db, orgId, department) {
   const { teams } = await getTeams(orgId);
@@ -54,7 +54,14 @@ export async function assignManagementRole(orgId, { uid, department, role }) {
     return { ok: true, role: 'team_leader', department };
   }
 
-  // IT — a standalone role, not tied to a department.
-  await setEmployeeRole(uid, 'IT_TEAM', orgId);
-  return { ok: true, role: 'it' };
+  if (role === 'it') {
+    // IT — a standalone role, not tied to a department.
+    await setEmployeeRole(uid, 'IT_TEAM', orgId);
+    return { ok: true, role: 'it' };
+  }
+
+  // Dev — hybrid: stays an employee (checks in, tracked) but gains full
+  // org-admin permissions. Not tied to a department.
+  await setEmployeeRole(uid, 'DEV', orgId);
+  return { ok: true, role: 'dev' };
 }

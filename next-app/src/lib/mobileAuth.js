@@ -3,6 +3,8 @@ import { firebaseAdmin } from './firebase';
 import { Paths } from './paths';
 import { ORG_ID } from './config';
 import { isManager } from './services/teams';
+import { clientIpFromHeaders } from './ip';
+import { enforceLoginGuards, isRestrictedRole } from './services/loginGuard';
 
 // Mobile auth: the Android app sends a Firebase ID token (Bearer). We verify it
 // with the Admin SDK and resolve the user's role. Single-org, so orgId is
@@ -43,6 +45,27 @@ export async function getMobileUser(request) {
     if (u.exists) role = u.data().role;
   }
   if (!role) throw new MobileAuthError(403, 'missing_claims');
+
+  // Device cap + per-employee IP allowlist. This is the single chokepoint every
+  // /api/v1 call passes through, so an unauthorized device/IP is blocked app-wide.
+  // Admins are exempt; the device write is throttled inside enforceLoginGuards.
+  if (isRestrictedRole(role)) {
+    const deviceId = (request.headers.get('x-device-id') || '').trim();
+    const deviceName = (request.headers.get('x-device-name') || '').trim().slice(0, 200) || null;
+    try {
+      await enforceLoginGuards({
+        orgId: ORG_ID,
+        uid,
+        role,
+        deviceId,
+        deviceName,
+        platform: 'android',
+        clientIp: clientIpFromHeaders(request.headers),
+      });
+    } catch (e) {
+      throw new MobileAuthError(e.status || 403, e.message || 'device_check_failed');
+    }
+  }
 
   return { uid, email, role, orgId: ORG_ID };
 }

@@ -16,9 +16,11 @@ object ApiClient {
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
+        coerceInputValues = true
     }
 
-    fun build(baseUrl: String): AttendApi {
+    fun build(baseUrl: String, deviceId: String): AttendApi {
+        val deviceName = (android.os.Build.MODEL ?: "Android").take(80)
         val authInterceptor = Interceptor { chain ->
             val req = chain.request()
             val user = FirebaseAuth.getInstance().currentUser
@@ -27,10 +29,12 @@ object ApiClient {
                     runBlocking { user.getIdToken(false).await().token }
                 }.getOrNull()
             } else null
-            val newReq = if (token != null) {
-                req.newBuilder().header("Authorization", "Bearer $token").build()
-            } else req
-            chain.proceed(newReq)
+            // Device identity for the server-side 2-device login cap (see loginGuard.js).
+            val builder = req.newBuilder()
+                .header("X-Device-Id", deviceId)
+                .header("X-Device-Name", deviceName)
+            if (token != null) builder.header("Authorization", "Bearer $token")
+            chain.proceed(builder.build())
         }
 
         // On 401, force-refresh the Firebase ID token once and retry.

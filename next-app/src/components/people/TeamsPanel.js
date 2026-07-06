@@ -10,6 +10,7 @@ const DEPARTMENTS = ['Engineering', 'Marketing', 'Project'];
 const ROLE_OPTIONS = [
   { key: 'team_leader', label: 'Team Leader' },
   { key: 'it', label: 'IT' },
+  { key: 'dev', label: 'Dev' },
 ];
 
 export default function TeamsPanel() {
@@ -61,7 +62,7 @@ export default function TeamsPanel() {
   // Every employee can be picked for a management role except org admins
   // (the backend also refuses to change admin/superadmin accounts).
   const assignable = useMemo(
-    () => employees.filter((e) => { const r = roleOf(e); return r !== 'ADMIN' && r !== 'SUPER_ADMIN'; }),
+    () => employees.filter((e) => { const r = roleOf(e); return r !== 'ADMIN' && r !== 'SUPER_ADMIN' && r !== 'DEV'; }),
     [employees],
   );
   // Empty query → suggest the whole list; typing filters it.
@@ -81,7 +82,10 @@ export default function TeamsPanel() {
     const its = employees
       .filter((e) => roleOf(e) === 'IT_TEAM')
       .map((e) => ({ key: `it:${e.id}`, kind: 'it', refId: e.id, employee: e.name || e.email, department: e.department || e.teamName || '—', role: 'IT' }));
-    return [...leaders, ...its];
+    const devs = employees
+      .filter((e) => roleOf(e) === 'DEV')
+      .map((e) => ({ key: `dev:${e.id}`, kind: 'dev', refId: e.id, employee: e.name || e.email, department: e.department || e.teamName || '—', role: 'Dev' }));
+    return [...leaders, ...its, ...devs];
   }, [teams, employees]);
 
   const closeModal = () => {

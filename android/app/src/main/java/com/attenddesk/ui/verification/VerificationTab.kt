@@ -547,6 +547,7 @@ private fun submit(
             )
             val res: CheckInResponse = container.api.checkIn(req)
             if (faceEmbeddingB64 != null) container.clearFaceEmbedding()
+            if (qrToken != null) container.setQrToken(null)
             onResult(
                 CheckOutcome(
                     ok = res.ok,
@@ -567,6 +568,7 @@ private fun submit(
             }
             if (parsed != null) {
                 if (faceEmbeddingB64 != null) container.clearFaceEmbedding()
+                if (qrToken != null) container.setQrToken(null)
                 onResult(
                     CheckOutcome(
                         ok = parsed.ok,

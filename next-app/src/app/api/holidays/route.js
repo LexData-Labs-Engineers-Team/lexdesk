@@ -4,7 +4,7 @@ import { getHolidays, createHoliday } from '@/lib/backend';
 
 export const dynamic = 'force-dynamic';
 
-const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin';
+const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin' || user.role === 'dev';
 
 // GET: any authenticated user (employees need holidays to render their calendar).
 export async function GET(request) {

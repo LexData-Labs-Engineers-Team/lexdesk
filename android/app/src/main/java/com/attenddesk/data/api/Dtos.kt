@@ -13,6 +13,8 @@ data class MeResponse(
     val role: String,
     val mustChangePassword: Boolean,
     val employeeId: String? = null,
+    val designation: String? = null,
+    val department: String? = null,
     val faceEnrolledAt: String? = null,
     val photoUrl: String? = null,
     val photoUpdatedAt: String? = null,

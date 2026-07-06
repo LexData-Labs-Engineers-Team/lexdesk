@@ -16,7 +16,7 @@ function tabsForRole() {
   if (typeof window !== 'undefined') {
     try { role = JSON.parse(localStorage.getItem('user') || 'null')?.role ?? null; } catch { role = null; }
   }
-  const isAdmin = role === 'admin' || role === 'superadmin';
+  const isAdmin = role === 'admin' || role === 'superadmin' || role === 'dev';
   return ALL_TABS.filter((t) => !t.adminOnly || isAdmin);
 }
 

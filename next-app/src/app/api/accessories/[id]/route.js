@@ -4,7 +4,7 @@ import { deleteAccessory } from '@/lib/backend';
 
 export const dynamic = 'force-dynamic';
 
-const allowed = (u) => u.role === 'admin' || u.role === 'superadmin' || u.role === 'it_team';
+const allowed = (u) => u.role === 'admin' || u.role === 'superadmin' || u.role === 'dev' || u.role === 'it_team';
 
 // DELETE: remove an accessory from inventory.
 export async function DELETE(request, ctx) {

@@ -8,6 +8,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import RoboAssistant from '@/components/RoboAssistant';
+import { getOrCreateWebDeviceId, webDeviceName } from '@/lib/deviceId';
 import { FEATURES, APP_DOWNLOAD_URL } from '../content';
 import { STATIONS_BY_ID } from './stations';
 
@@ -75,7 +76,7 @@ function SignInPanel({ station, onBack }) {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, deviceId: getOrCreateWebDeviceId(), deviceName: webDeviceName() }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Login failed');

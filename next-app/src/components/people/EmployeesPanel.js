@@ -6,7 +6,7 @@ import PageHeader from '@/components/PageHeader';
 import EmployeeAvatar from '@/components/EmployeeAvatar';
 import MonthNav from '@/components/MonthNav';
 import { useAttendData } from '@/lib/useAttendData';
-import { perEmployeeStats, fmtTime, onlyEmployees, inBdMonth } from '@/lib/attend';
+import { perEmployeeStats, fmtTime, onlyStaff, inBdMonth } from '@/lib/attend';
 
 const PAGE_SIZES = [10, 25, 50];
 // Canonical departments — always offered even before their team doc exists.
@@ -25,7 +25,8 @@ export default function EmployeesPanel() {
   const { employees, events, loading, error, refresh } = useAttendData(['employees', 'attendance'], { month: ym });
   const [teams, setTeams] = useState([]);
   // A system admin (superadmin) needs to see ADMINS too — to open the org
-  // admin's profile and reset their password. Regular admins see employees only.
+  // admin's profile and reset their password. Regular admins see staff
+  // (employees + IT team) so IT members' login-security controls are reachable.
   const [isSuper, setIsSuper] = useState(false);
   useEffect(() => {
     try { setIsSuper(JSON.parse(localStorage.getItem('user') || 'null')?.role === 'superadmin'); } catch { setIsSuper(false); }
@@ -73,7 +74,7 @@ export default function EmployeesPanel() {
 
   const rows = useMemo(
     () =>
-      (isSuper ? (employees || []) : onlyEmployees(employees)).map((e) => {
+      (isSuper ? (employees || []) : onlyStaff(employees)).map((e) => {
         const s = stats[e.id] || { presentDays: 0, lateDays: 0, lastCheckIn: null };
         return { ...e, presentDays: s.presentDays, late: s.lateDays, lastCheckIn: s.lastCheckIn };
       }),

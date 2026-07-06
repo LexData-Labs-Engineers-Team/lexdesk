@@ -4,7 +4,7 @@ import { updateOffice } from '@/lib/backend';
 
 export const dynamic = 'force-dynamic';
 
-const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin';
+const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin' || user.role === 'dev';
 
 // POST: admins only — update (or create) the org's office in AttendDesk.
 export async function POST(request) {

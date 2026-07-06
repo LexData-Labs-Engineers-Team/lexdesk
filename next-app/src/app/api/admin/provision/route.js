@@ -14,7 +14,7 @@ export const dynamic = 'force-dynamic';
 //    (the env system admin or a seeded SUPER_ADMIN) — keeps an org admin from
 //    creating more admins.
 const isSuper = (user) => user.role === 'superadmin';
-const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin';
+const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin' || user.role === 'dev';
 
 export async function GET(request) {
   const user = getUserFromRequest(request);

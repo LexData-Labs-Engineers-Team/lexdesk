@@ -60,9 +60,11 @@ function NavLink({ href, label, icon, exact, onNavigate }) {
 }
 
 export default function SidebarNav({ role, isTeamLeader, onNavigate }) {
-  const admin = role === 'admin' || role === 'superadmin';
+  const admin = role === 'admin' || role === 'superadmin' || role === 'dev';
   const it = role === 'it_team';
   const emp = role === 'employee';
+  // Dev = hybrid: full admin nav (via `admin`) PLUS employee self-service links.
+  const dev = role === 'dev';
   return (
     <nav className="flex-1 w-full flex flex-col items-center min-h-0 py-2">
       {/* Scrollable menu items, vertically centered in the rail (my-auto centers
@@ -72,11 +74,11 @@ export default function SidebarNav({ role, isTeamLeader, onNavigate }) {
       <div className="my-auto w-full flex flex-col items-center gap-1.5 py-2">
       {admin && <NavLink href="/dashboard" exact label="Dashboard" icon={Icons.dashboard} onNavigate={onNavigate} />}
       {admin && <NavLink href="/dashboard/people" label="People" icon={Icons.employees} onNavigate={onNavigate} />}
-      {emp && <NavLink href="/dashboard/my-dashboard" label="Dashboard" icon={Icons.dashboard} onNavigate={onNavigate} />}
-      {emp && <NavLink href="/dashboard/application" label="Application" icon={Icons.application} onNavigate={onNavigate} />}
-      {emp && <NavLink href="/dashboard/my-recon" label="Reconciliation" icon={Icons.recon} onNavigate={onNavigate} />}
-      {emp && isTeamLeader && <NavLink href="/dashboard/team-approvals" label="Team Approvals" icon={Icons.approvals} onNavigate={onNavigate} />}
-      {emp && isTeamLeader && <NavLink href="/dashboard/team-attendance" label="Team Attendance" icon={Icons.employees} onNavigate={onNavigate} />}
+      {(emp || dev) && <NavLink href="/dashboard/my-dashboard" label="Dashboard" icon={Icons.dashboard} onNavigate={onNavigate} />}
+      {(emp || dev) && <NavLink href="/dashboard/application" label="Application" icon={Icons.application} onNavigate={onNavigate} />}
+      {(emp || dev) && <NavLink href="/dashboard/my-recon" label="Reconciliation" icon={Icons.recon} onNavigate={onNavigate} />}
+      {(emp || dev) && isTeamLeader && <NavLink href="/dashboard/team-approvals" label="Team Approvals" icon={Icons.approvals} onNavigate={onNavigate} />}
+      {(emp || dev) && isTeamLeader && <NavLink href="/dashboard/team-attendance" label="Team Attendance" icon={Icons.employees} onNavigate={onNavigate} />}
       {/* IT Team role — its own set of sections. */}
       {it && <NavLink href="/dashboard/my-dashboard" label="Dashboard" icon={Icons.dashboard} onNavigate={onNavigate} />}
       {it && <NavLink href="/dashboard/people" label="People" icon={Icons.employees} onNavigate={onNavigate} />}
@@ -85,10 +87,10 @@ export default function SidebarNav({ role, isTeamLeader, onNavigate }) {
       {it && <NavLink href="/dashboard/accessories" label="Accessories" icon={Icons.assets} onNavigate={onNavigate} />}
       {it && <NavLink href="/dashboard/tracking" label="Tracking" icon={Icons.recon} onNavigate={onNavigate} />}
       {admin && <NavLink href="/dashboard/attendance" label="Attendance" icon={Icons.attendance} onNavigate={onNavigate} />}
-      {admin && <NavLink href="/dashboard/approvals" label="Approvals" icon={Icons.approvals} onNavigate={onNavigate} />}
+      {(role === 'admin' || role === 'superadmin') && <NavLink href="/dashboard/approvals" label="Approvals" icon={Icons.approvals} onNavigate={onNavigate} />}
       {admin && <NavLink href="/dashboard/noticeboard" label="Notices & Holidays" icon={Icons.notices} onNavigate={onNavigate} />}
       {admin && <NavLink href="/dashboard/attenddesk" label="Settings" icon={Icons.attenddesk} onNavigate={onNavigate} />}
-      {(role === 'admin' || role === 'superadmin') && <NavLink href="/dashboard/organization" label="Organization" icon={Icons.organization} onNavigate={onNavigate} />}
+      {admin && <NavLink href="/dashboard/organization" label="Organization" icon={Icons.organization} onNavigate={onNavigate} />}
       </div>
       </div>
 

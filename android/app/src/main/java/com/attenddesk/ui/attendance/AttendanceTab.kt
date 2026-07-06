@@ -17,7 +17,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.EditCalendar
-import androidx.compose.material.icons.outlined.ListAlt
+import androidx.compose.material.icons.automirrored.outlined.ListAlt
 import androidx.compose.material.icons.outlined.PhonelinkRing
 import androidx.compose.material.icons.outlined.QrCodeScanner
 import androidx.compose.material.icons.outlined.RuleFolder
@@ -52,7 +52,9 @@ import com.attenddesk.ui.theme.DonutGreen
 import com.attenddesk.ui.theme.MutedBorder
 import com.attenddesk.ui.util.DhakaZone
 import kotlinx.coroutines.launch
+import java.time.DayOfWeek
 import java.time.LocalDate
+import java.time.YearMonth
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,11 +75,14 @@ fun AttendanceTab(
     LaunchedEffect(Unit) { scope.launch { load() } }
 
     val today = LocalDate.now(DhakaZone)
-    val week = remember(events) { weeklySummary(events.orEmpty(), today) }
+    val month = remember(events) { monthSummary(events.orEmpty(), today) }
+    val monthLabel = remember(today) {
+        today.month.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.getDefault())
+    }
 
     val actions = buildList {
         add(ModuleItem("My Attendance", Icons.Outlined.CalendarMonth, onClick = { onNavigate(Routes.MY_ATTENDANCE) }))
-        add(ModuleItem("View Attendance", Icons.Outlined.ListAlt, onClick = { onNavigate(Routes.TEAM) }))
+        add(ModuleItem("View Attendance", Icons.AutoMirrored.Outlined.ListAlt, onClick = { onNavigate(Routes.TEAM) }))
         add(ModuleItem("QR / Face Att.", Icons.Outlined.QrCodeScanner, onClick = { onNavigate(Routes.CHECK_IN) }))
         add(ModuleItem("Recon. Application", Icons.Outlined.EditCalendar, onClick = { onNavigate(Routes.RECON) }))
         add(ModuleItem("Remote Attendance", Icons.Outlined.PhonelinkRing, onClick = { onNavigate(Routes.REMOTE) }))
@@ -101,25 +106,25 @@ fun AttendanceTab(
                     .padding(horizontal = 16.dp, vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp),
             ) {
-                SectionCard(title = "Weekly Summary") {
+                SectionCard(title = "Monthly Summary") {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         DonutChart(
                             segments = listOf(
-                                DonutSegment(week.onTime.toFloat(), DonutGreen),
-                                DonutSegment(week.late.toFloat(), Brand500),
-                                DonutSegment(week.absent.toFloat(), MutedBorder),
+                                DonutSegment(month.onTime.toFloat(), DonutGreen),
+                                DonutSegment(month.late.toFloat(), Brand500),
+                                DonutSegment(month.absent.toFloat(), MutedBorder),
                             ),
                             diameter = 132.dp,
                             ringWidth = 18.dp,
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
-                                    "${week.onTime + week.late}",
+                                    "${month.present}",
                                     style = MaterialTheme.typography.headlineSmall,
                                     fontWeight = FontWeight.Bold,
                                 )
                                 Text(
-                                    "of 7 present",
+                                    "of ${month.workingDays} days",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -127,14 +132,14 @@ fun AttendanceTab(
                         }
                         Spacer(Modifier.size(16.dp))
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Legend(DonutGreen, "On-time", week.onTime)
-                            Legend(Brand500, "Late", week.late)
-                            Legend(MutedBorder, "Absent", week.absent)
+                            Legend(DonutGreen, "On-time", month.onTime)
+                            Legend(Brand500, "Late", month.late)
+                            Legend(MutedBorder, "Absent", month.absent)
                         }
                     }
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "Your last 7 days. See everyone's in/out in View Attendance.",
+                        "$monthLabel so far — working days (excl. Fri/Sat). See everyone's in/out in View Attendance.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -157,21 +162,28 @@ private fun Legend(color: Color, label: String, count: Int) {
     }
 }
 
-private data class WeekSummary(val onTime: Int, val late: Int, val absent: Int)
+private data class MonthSummary(
+    val present: Int,
+    val onTime: Int,
+    val late: Int,
+    val absent: Int,
+    val workingDays: Int,
+)
 
-private fun weeklySummary(events: List<HistoryEvent>, today: LocalDate): WeekSummary {
-    val canon = buildCanon(events, DhakaZone)
-    var onTime = 0
-    var late = 0
-    var absent = 0
-    for (offset in 0..6) {
-        val day = today.minusDays(offset.toLong())
-        val slot = canon[day]
-        when {
-            slot?.firstCheckIn == null -> absent++
-            slot.firstCheckIn.isLate -> late++
-            else -> onTime++
-        }
+/**
+ * Current-month-to-date summary. present = days with a passing check-in this
+ * month; absent = elapsed working days (excl. the Fri/Sat Dhaka weekend) not yet
+ * present. Holidays aren't available on-device, so a holiday reads as absent.
+ */
+private fun monthSummary(events: List<HistoryEvent>, today: LocalDate): MonthSummary {
+    val stats = computeMonthStats(events, YearMonth.from(today), DhakaZone)
+    var workingDays = 0
+    var d = today.withDayOfMonth(1)
+    while (!d.isAfter(today)) {
+        if (d.dayOfWeek != DayOfWeek.FRIDAY && d.dayOfWeek != DayOfWeek.SATURDAY) workingDays++
+        d = d.plusDays(1)
     }
-    return WeekSummary(onTime, late, absent)
+    val present = stats.onTimeDays + stats.late
+    val absent = (workingDays - present).coerceAtLeast(0)
+    return MonthSummary(present, stats.onTimeDays, stats.late, absent, workingDays)
 }

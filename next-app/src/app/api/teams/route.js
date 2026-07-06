@@ -4,7 +4,7 @@ import { getTeams, createTeam } from '@/lib/backend';
 
 export const dynamic = 'force-dynamic';
 
-const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin';
+const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin' || user.role === 'dev';
 
 // GET: any authenticated user (the team picker / leader views need the list).
 export async function GET(request) {

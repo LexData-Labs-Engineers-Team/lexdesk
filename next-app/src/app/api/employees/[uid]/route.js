@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
 export async function PATCH(request, ctx) {
   const user = getUserFromRequest(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (user.role !== 'admin' && user.role !== 'superadmin') {
+  if (user.role !== 'admin' && user.role !== 'superadmin' && user.role !== 'dev') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
@@ -37,7 +37,7 @@ export async function PATCH(request, ctx) {
 export async function DELETE(request, ctx) {
   const user = getUserFromRequest(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (user.role !== 'admin' && user.role !== 'superadmin') {
+  if (user.role !== 'admin' && user.role !== 'superadmin' && user.role !== 'dev') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 

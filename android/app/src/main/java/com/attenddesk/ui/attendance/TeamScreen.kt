@@ -2,7 +2,6 @@ package com.attenddesk.ui.attendance
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -11,11 +10,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -29,7 +30,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.attenddesk.AppContainer
 import com.attenddesk.data.api.TeamMemberSummaryDto
-import com.attenddesk.data.api.TeamSummaryResponse
 import com.attenddesk.ui.components.EmptyState
 import com.attenddesk.ui.components.GradientHeader
 import com.attenddesk.ui.components.LoadingDots
@@ -40,25 +40,45 @@ import kotlinx.coroutines.launch
 @Composable
 fun TeamScreen(container: AppContainer, onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
-    var data by remember { mutableStateOf<TeamSummaryResponse?>(null) }
+    var members by remember { mutableStateOf<List<TeamMemberSummaryDto>?>(null) }
+    var error by remember { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        scope.launch { runCatching { container.api.viewAttendance() }.onSuccess { data = it }.onFailure { data = TeamSummaryResponse(false, emptyList()) } }
+    suspend fun load() {
+        runCatching { container.api.viewAttendance() }
+            .onSuccess { members = it.members; error = false }
+            .onFailure { if (members == null) error = true }
     }
+    LaunchedEffect(Unit) { load() }
 
     Scaffold(
         topBar = { GradientHeader(title = "View Attendance", onBack = onBack) },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
-        val d = data
-        Box(modifier = Modifier.padding(padding).fillMaxSize()) {
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = { refreshing = true; scope.launch { load(); refreshing = false } },
+            modifier = Modifier.padding(padding).fillMaxSize(),
+        ) {
+            val list = members
             when {
-                d == null -> Box(Modifier.fillMaxSize(), Alignment.Center) { LoadingDots() }
-                d.members.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                list == null && error -> Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    EmptyState(
+                        icon = Icons.Outlined.CloudOff,
+                        title = "Couldn't load",
+                        description = "Check your connection and pull down to refresh.",
+                    )
+                }
+                list == null -> Box(Modifier.fillMaxSize(), Alignment.Center) { LoadingDots() }
+                list.isEmpty() -> Box(Modifier.fillMaxSize(), Alignment.Center) {
                     EmptyState(icon = Icons.Outlined.Groups, title = "No attendance", description = "No employee attendance to show yet.")
                 }
-                else -> LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(d.members, key = { it.uid }) { m -> MemberCard(m) }
+                else -> LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    items(list, key = { it.uid }) { m -> MemberCard(m) }
                 }
             }
         }

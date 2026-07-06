@@ -25,6 +25,10 @@ export async function GET(request) {
       name: data.name,
       role: data.role,
       employeeId: data.employeeId ?? null,
+      designation: data.designation ?? null,
+      // Mirror the web: fall back to the employee's team name when the dedicated
+      // department field is empty (employee.department || employee.teamName).
+      department: data.department || data.teamName || null,
       mustChangePassword: data.mustChangePassword ?? false,
       faceEnrolledAt: data.faceEnrolledAt?.toDate?.()?.toISOString() ?? null,
       photoUrl: await signedReadUrl(data.photoStoragePath),

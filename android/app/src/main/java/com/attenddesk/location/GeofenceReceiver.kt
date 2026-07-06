@@ -146,14 +146,14 @@ class GeofenceReceiver : BroadcastReceiver() {
         val (title, body, notifId) =
             if (transition == Geofence.GEOFENCE_TRANSITION_ENTER) {
                 Triple(
-                    if (autoCheckedIn) "AttendDesk checked you in" else "You arrived at the office",
+                    if (autoCheckedIn) "TeamOS checked you in" else "You arrived at the office",
                     if (autoCheckedIn) "Auto check-in succeeded at the office geofence."
                     else "Tap to check in.",
                     LocationNotifications.NOTIF_ID_GEOFENCE_ENTER,
                 )
             } else {
                 Triple(
-                    if (autoCheckedIn) "AttendDesk checked you out" else "You left the office",
+                    if (autoCheckedIn) "TeamOS checked you out" else "You left the office",
                     if (autoCheckedIn) "Auto check-out succeeded when you left the geofence."
                     else "Tap to check out.",
                     LocationNotifications.NOTIF_ID_GEOFENCE_EXIT,

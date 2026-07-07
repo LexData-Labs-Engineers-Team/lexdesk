@@ -10,7 +10,10 @@ import { listLedTeamMemberUids, canManageUser } from './services/teams';
 const unauth = () => NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 const noUser = () => NextResponse.json({ error: 'no_linked_attenddesk_user' }, { status: 400 });
 const fail = (e) => NextResponse.json({ error: e.message, upstream: e.body ?? null }, { status: e.status || 502 });
-const isAdmin = (role) => role === 'admin' || role === 'superadmin';
+// admin/superadmin everywhere; dev is additionally allowed here because these
+// factories (makeAdminList/makeAdminDecide) back ONLY the recon approval routes —
+// so this grants Dev recon approvals without touching leave/asset/remote.
+const isAdmin = (role) => role === 'admin' || role === 'superadmin' || role === 'dev';
 
 export function makeMineGet(listMineFn) {
   return async (request) => {

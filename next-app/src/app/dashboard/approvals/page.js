@@ -23,6 +23,8 @@ function viewerRole() {
 }
 
 function tabsFor(role) {
+  // Dev is a recon-only approver on web (not leave/asset/remote).
+  if (role === 'dev') return ALL_TABS.filter((t) => t.key === 'recon');
   const admin = role === 'admin' || role === 'superadmin';
   return ALL_TABS.filter((t) => !t.adminOnly || admin);
 }

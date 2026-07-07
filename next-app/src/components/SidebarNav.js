@@ -87,7 +87,7 @@ export default function SidebarNav({ role, isTeamLeader, onNavigate }) {
       {it && <NavLink href="/dashboard/accessories" label="Accessories" icon={Icons.assets} onNavigate={onNavigate} />}
       {it && <NavLink href="/dashboard/tracking" label="Tracking" icon={Icons.recon} onNavigate={onNavigate} />}
       {admin && <NavLink href="/dashboard/attendance" label="Attendance" icon={Icons.attendance} onNavigate={onNavigate} />}
-      {(role === 'admin' || role === 'superadmin') && <NavLink href="/dashboard/approvals" label="Approvals" icon={Icons.approvals} onNavigate={onNavigate} />}
+      {admin && <NavLink href="/dashboard/approvals" label="Approvals" icon={Icons.approvals} onNavigate={onNavigate} />}
       {admin && <NavLink href="/dashboard/noticeboard" label="Notices & Holidays" icon={Icons.notices} onNavigate={onNavigate} />}
       {admin && <NavLink href="/dashboard/attenddesk" label="Settings" icon={Icons.attenddesk} onNavigate={onNavigate} />}
       {admin && <NavLink href="/dashboard/organization" label="Organization" icon={Icons.organization} onNavigate={onNavigate} />}

@@ -26,6 +26,11 @@ export default function ReconApprovalsPanel() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState('');
   const [feedback, setFeedback] = useState('');
+  // System admin can delete recon logs. Lazy init (no set-state-in-effect).
+  const [isSuper] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try { return JSON.parse(localStorage.getItem('user') || 'null')?.role === 'superadmin'; } catch { return false; }
+  });
 
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -56,6 +61,21 @@ export default function ReconApprovalsPanel() {
     } catch (e) { setError(e.message); } finally { setBusyId(''); }
   };
 
+  const remove = async (id) => {
+    if (!window.confirm('Permanently delete this reconciliation log? Any attendance already applied on approval is kept.')) return;
+    setBusyId(id); setError(''); setFeedback('');
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/admin/recon/${encodeURIComponent(id)}`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      setFeedback('Reconciliation log deleted.'); setTimeout(() => setFeedback(''), 3000);
+      await load();
+    } catch (e) { setError(e.message); } finally { setBusyId(''); }
+  };
+
   const list = requests || [];
   return (
     <div className="flex flex-col gap-6">
@@ -82,12 +102,18 @@ export default function ReconApprovalsPanel() {
                   <td className="py-3 px-4 text-[var(--color-text-muted)] max-w-[240px]">{r.reason || '—'}</td>
                   <td className={`py-3 px-4 font-semibold capitalize ${STATUS_STYLE[r.status] || ''}`}>{r.status}{r.decisionNote && <div className="text-xs text-[var(--color-text-muted)] font-normal">{r.decisionNote}</div>}</td>
                   <td className="py-3 px-4 text-right whitespace-nowrap">
-                    {r.status === 'pending' ? (
-                      <div className="flex gap-2 justify-end">
-                        <button disabled={busyId === r.id} onClick={() => decide(r.id, 'approved')} className="px-3 py-1 rounded text-xs font-semibold bg-[rgba(34,197,94,0.15)] text-[var(--color-green)] border border-[var(--color-green)] disabled:opacity-50">Approve</button>
-                        <button disabled={busyId === r.id} onClick={() => decide(r.id, 'rejected')} className="px-3 py-1 rounded text-xs font-semibold bg-[rgba(239,68,68,0.12)] text-[var(--color-red)] border border-[rgba(239,68,68,0.4)] disabled:opacity-50">Reject</button>
-                      </div>
-                    ) : <span className="text-xs text-[var(--color-text-muted)]">—</span>}
+                    <div className="flex gap-2 justify-end">
+                      {r.status === 'pending' && (
+                        <>
+                          <button disabled={busyId === r.id} onClick={() => decide(r.id, 'approved')} className="px-3 py-1 rounded text-xs font-semibold bg-[rgba(34,197,94,0.15)] text-[var(--color-green)] border border-[var(--color-green)] disabled:opacity-50">Approve</button>
+                          <button disabled={busyId === r.id} onClick={() => decide(r.id, 'rejected')} className="px-3 py-1 rounded text-xs font-semibold bg-[rgba(239,68,68,0.12)] text-[var(--color-red)] border border-[rgba(239,68,68,0.4)] disabled:opacity-50">Reject</button>
+                        </>
+                      )}
+                      {isSuper && (
+                        <button disabled={busyId === r.id} onClick={() => remove(r.id)} className="px-3 py-1 rounded text-xs font-semibold bg-[rgba(239,68,68,0.12)] text-[var(--color-red)] border border-[rgba(239,68,68,0.4)] disabled:opacity-50">Delete</button>
+                      )}
+                      {r.status !== 'pending' && !isSuper && <span className="text-xs text-[var(--color-text-muted)]">—</span>}
+                    </div>
                   </td>
                 </tr>
               ))}

@@ -1,3 +1,4 @@
+import { firebaseAdmin } from '../firebase';
 import { Paths } from '../paths';
 import { createRequestService, ISO_DAY_RE } from './requestKit';
 import { addManualAttendance } from './attendance';
@@ -55,3 +56,14 @@ export async function decideRecon(id, decision, note, orgId, deciderUid) {
   return result;
 }
 export const getRecon = (orgId, id) => svc.getOne(orgId, id);
+
+// System-admin cleanup: permanently delete a reconciliation record. Log only —
+// any manual attendance the approval already wrote is intentionally left intact.
+export async function deleteRecon(orgId, id) {
+  const { db } = firebaseAdmin();
+  const ref = db.doc(Paths.reconRequest(orgId, id));
+  const snap = await ref.get();
+  if (!snap.exists) throw Object.assign(new Error('not_found'), { status: 404 });
+  await ref.delete();
+  return { ok: true };
+}

@@ -244,6 +244,9 @@ data class RemoteDto(
     val lng: Double? = null,
     val place: String = "",
     val status: String = "pending",
+    val startedAt: String? = null,
+    val endedAt: String? = null,
+    val durationMinutes: Int? = null,
     val createdAt: String? = null,
     val decidedAt: String? = null,
     val decidedBy: String? = null,
@@ -252,7 +255,7 @@ data class RemoteDto(
 
 @Serializable
 data class RemoteSubmitRequest(
-    val day: String,
+    val day: String = "",
     val reason: String,
     val lat: Double? = null,
     val lng: Double? = null,

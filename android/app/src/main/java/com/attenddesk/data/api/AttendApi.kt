@@ -61,6 +61,7 @@ interface AttendApi {
     // Remote attendance
     @GET("me/remote") suspend fun listMyRemote(): RemoteListResponse
     @POST("me/remote") suspend fun submitRemote(@Body body: RemoteSubmitRequest): IdResponse
+    @POST("me/remote/{id}") suspend fun doneRemote(@Path("id") id: String)
     @DELETE("me/remote/{id}") suspend fun cancelRemote(@Path("id") id: String)
 
     // Assets

@@ -18,7 +18,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.FreeBreakfast
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -28,7 +27,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -44,7 +42,6 @@ import com.attenddesk.ui.components.DayTypeBadge
 import com.attenddesk.ui.components.EmptyState
 import com.attenddesk.ui.components.GradientHeader
 import com.attenddesk.ui.components.LoadingDots
-import com.attenddesk.ui.components.SegmentedTabs
 import com.attenddesk.ui.components.toneColors
 import com.attenddesk.ui.util.DhakaZone
 import com.attenddesk.ui.util.LocalIs24Hour
@@ -60,7 +57,6 @@ fun MyAttendanceScreen(container: AppContainer, onBack: () -> Unit) {
     var events by remember { mutableStateOf<List<HistoryEvent>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var refreshing by remember { mutableStateOf(false) }
-    var tab by remember { mutableIntStateOf(0) }
 
     suspend fun load() {
         try { events = container.api.history(200).events; error = null }
@@ -73,21 +69,6 @@ fun MyAttendanceScreen(container: AppContainer, onBack: () -> Unit) {
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         Column(modifier = Modifier.padding(padding).fillMaxSize()) {
-            SegmentedTabs(
-                tabs = listOf("Attendance", "Break Time"),
-                selected = tab,
-                onSelect = { tab = it },
-            )
-            if (tab == 1) {
-                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    EmptyState(
-                        icon = Icons.Outlined.FreeBreakfast,
-                        title = "Break Time coming soon",
-                        description = "Break in/out tracking isn't available yet.",
-                    )
-                }
-                return@Column
-            }
             val rows = remember(events) { buildDayRows(events.orEmpty(), DhakaZone) }
             androidx.compose.material3.pulltorefresh.PullToRefreshBox(
                 isRefreshing = refreshing,

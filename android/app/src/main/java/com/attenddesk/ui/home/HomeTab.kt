@@ -19,9 +19,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Login
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.FactCheck
-import androidx.compose.material.icons.outlined.FreeBreakfast
-import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Inventory2
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -97,9 +96,8 @@ fun HomeTab(
 
     val modules = listOf(
         ModuleItem("Check In / Out", Icons.Outlined.FactCheck, onClick = { onNavigate(Routes.CHECK_IN) }),
-        ModuleItem("Break Time", Icons.Outlined.FreeBreakfast, onClick = { onNavigate(Routes.BREAK_TIME) }),
-        ModuleItem("Directory", Icons.Outlined.Groups, onClick = { onNavigate(Routes.DIRECTORY) }),
         ModuleItem("Assets", Icons.Outlined.Inventory2, onClick = { onNavigate(Routes.ASSETS) }),
+        ModuleItem("My Attendance", Icons.Outlined.CalendarMonth, onClick = { onNavigate(Routes.MY_ATTENDANCE) }),
     )
 
     Column(modifier = Modifier.fillMaxSize()) {

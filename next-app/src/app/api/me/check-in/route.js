@@ -60,6 +60,11 @@ export async function POST(request) {
   // Server-derived office-IP signal for the web 'ip' check (mobile never sends
   // this, so the IP check is web-only). Whitelisted here, never read from body.
   payload.clientIp = clientIpFromHeaders(request.headers) || '';
+  // Device-adaptive web location: mobile browsers (which have GPS) must also pass
+  // the geofence; desktop browsers rely on office-IP. Derived from the User-Agent
+  // server-side (whitelisted, never read from the body).
+  const ua = request.headers.get('user-agent') || '';
+  payload.webDevice = /Mobi|Android|iPhone|iPad|iPod|Windows Phone/i.test(ua) ? 'mobile' : 'desktop';
   const face = body?.faceEmbeddingB64;
   if (face != null) {
     const validFace =

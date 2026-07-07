@@ -237,13 +237,22 @@ export async function processCheckIn(uid, organizationId, userEmail, payload) {
   }
 
   let requiredFailed = results.filter((r) => r.required && !r.passed);
-  // Web "GPS or office-IP": geo and ip are alternative location proofs. When
-  // both checks are present (web) and at least one is required, EITHER passing
-  // satisfies the location requirement — only block when BOTH fail. Mobile has
-  // no ip result, so it keeps the standard AND behavior.
   const geoR = results.find((r) => r.name === 'geo');
   const ipR = results.find((r) => r.name === 'ip');
-  if (geoR && ipR && (geoR.required || ipR.required)) {
+  if (payload.webDevice && (geoR || ipR) && (policy.requireGeo || policy.requireIp)) {
+    // Device-adaptive WEB location (payload.webDevice derived from the User-Agent):
+    //   - mobile web  → require BOTH geofence AND office-IP
+    //   - desktop web → require office-IP only (desktops rarely have GPS)
+    // Collapse geo/ip into a single 'location' verdict. If the IP gate isn't
+    // configured (no ipR) we fall back to geo so we don't silently pass.
+    requiredFailed = requiredFailed.filter((r) => r.name !== 'geo' && r.name !== 'ip');
+    const locationOk = payload.webDevice === 'mobile'
+      ? (ipR ? !!(geoR?.passed && ipR.passed) : !!geoR?.passed)
+      : (ipR ? !!ipR.passed : !!geoR?.passed);
+    if (!locationOk) requiredFailed.push({ name: 'location', required: true, passed: false });
+  } else if (geoR && ipR && (geoR.required || ipR.required)) {
+    // Fallback (no webDevice, e.g. the native app never sets it — though the app
+    // has no ip result, so this branch is web-legacy only): original "geo OR ip".
     requiredFailed = requiredFailed.filter((r) => r.name !== 'geo' && r.name !== 'ip');
     if (!(geoR.passed || ipR.passed)) {
       requiredFailed.push({ name: 'location', required: true, passed: false });
@@ -279,6 +288,7 @@ export async function processCheckIn(uid, organizationId, userEmail, payload) {
     scheduledStart: scheduledStart ?? null,
     scheduledEnd: scheduledEnd ?? null,
     clientMode: 'mobile',
+    webDevice: payload.webDevice ?? null,
     apiKeyId: null,
     deviceId: payload.deviceId ?? null,
     deviceName: payload.deviceName ?? null,

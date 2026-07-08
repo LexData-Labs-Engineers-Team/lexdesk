@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { apiFetch } from '@/lib/apiFetch';
 
 const STATUS_FILTERS = ['pending', 'approved', 'rejected', 'cancelled', 'all'];
 const STATUS_STYLE = {
@@ -37,7 +38,7 @@ export default function ReconApprovalsPanel() {
     try {
       const token = localStorage.getItem('token');
       const qs = status === 'all' ? '' : `?status=${status}`;
-      const res = await fetch(`/api/admin/recon${qs}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+      const res = await apiFetch(`/api/admin/recon${qs}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setRequests(json.requests || []);

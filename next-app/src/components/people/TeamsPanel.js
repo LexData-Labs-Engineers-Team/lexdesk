@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import PageHeader from '@/components/PageHeader';
+import { apiFetch } from '@/lib/apiFetch';
 
 const inputCls =
   'bg-[var(--color-bg)] border border-[var(--color-card-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text-main)] focus:outline-none focus:border-[var(--color-purple)]';
@@ -38,8 +39,8 @@ export default function TeamsPanel() {
     setError('');
     try {
       const [tRes, eRes] = await Promise.all([
-        fetch('/api/teams', { headers: authHeader(), cache: 'no-store' }),
-        fetch('/api/attenddesk?resource=employees', { headers: authHeader(), cache: 'no-store' }),
+        apiFetch('/api/teams', { headers: authHeader(), cache: 'no-store' }),
+        apiFetch('/api/attenddesk?resource=employees', { headers: authHeader(), cache: 'no-store' }),
       ]);
       const tJson = await tRes.json();
       if (!tRes.ok) throw new Error(tJson.error || `HTTP ${tRes.status}`);

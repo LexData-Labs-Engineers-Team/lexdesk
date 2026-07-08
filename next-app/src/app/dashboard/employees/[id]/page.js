@@ -6,6 +6,7 @@ import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import EmployeeAvatar from '@/components/EmployeeAvatar';
 import { useAttendData } from '@/lib/useAttendData';
+import { apiFetch } from '@/lib/apiFetch';
 import { eventsForUser, perEmployeeStats, fmtTime, isLateCheckIn } from '@/lib/attend';
 
 const fmtDate = (v) => {
@@ -53,7 +54,7 @@ export default function EmployeeProfilePage() {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
-    fetch('/api/teams', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+    apiFetch('/api/teams', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { teams: [] }))
       .then((j) => setTeams(j.teams || []))
       .catch(() => setTeams([]));

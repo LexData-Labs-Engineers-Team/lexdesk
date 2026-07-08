@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import PageHeader from '@/components/PageHeader';
+import { apiFetch } from '@/lib/apiFetch';
 
 // Only the editable settings are shown on this page. `query` is appended verbatim.
 const RESOURCES = [
@@ -223,7 +224,7 @@ export default function AttendDeskPage() {
       RESOURCES.map(async (r) => {
         try {
           const qs = `resource=${r.key}${r.query ? '&' + r.query : ''}`;
-          const res = await fetch(`/api/attenddesk?${qs}`, {
+          const res = await apiFetch(`/api/attenddesk?${qs}`, {
             headers: { Authorization: `Bearer ${token}` },
             cache: 'no-store',
           });

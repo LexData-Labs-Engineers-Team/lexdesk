@@ -92,6 +92,19 @@ Bootstrap scripts `scripts/seed.mjs` / `scripts/seed-superadmin.mjs` now write t
 admin/superadmin row to Postgres (they still create the Firebase Auth user); they
 need `DATABASE_URL` too.
 
+### Keep-warm cron (prevents cold-start "couldn't load")
+
+Neon's free tier auto-suspends the compute after ~5 min idle, so the first request
+after a quiet spell pays a wake latency and can time out. A Vercel Cron
+(`next-app/vercel.json`) pings `/api/cron/keep-warm` every 4 min **during work hours
+only** — `*/4 2-13 * * 0-4` (UTC) = **08:00–19:59 BDT, Sun–Thu** — to hold the compute
+awake when people actually use the app. It is scoped to work hours/days on purpose:
+24/7 keep-warm would exceed Neon's free **100 CU-hours/month**; the work-hours window
+is ≈60 CU-hours. Optionally set `CRON_SECRET` (Vercel env) to require
+`Authorization: Bearer <secret>` on that endpoint. Off-hours the DB still sleeps; the
+web (`apiFetch`) and the Android app both **retry a failed GET once** so an off-hours
+cold start self-heals instead of showing "couldn't load".
+
 ## Android app
 
 The app's backend URL is baked in at build time in

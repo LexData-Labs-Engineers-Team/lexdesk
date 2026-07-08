@@ -6,6 +6,7 @@ import PageHeader from '@/components/PageHeader';
 import KpiCard from '@/components/KpiCard';
 import MonthNav from '@/components/MonthNav';
 import { useAttendData } from '@/lib/useAttendData';
+import { apiFetch } from '@/lib/apiFetch';
 import { todaySummary, onLeaveTodayCount, onlyEmployees, perEmployeeStats } from '@/lib/attend';
 
 // One summary card per approval type, linking through to its tab on the
@@ -56,7 +57,7 @@ export default function DashboardPage() {
       const token = localStorage.getItem('token');
       const results = await Promise.all(
         APPROVAL_CARDS.map(async ({ key }) => {
-          const res = await fetch(`/api/admin/${key}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+          const res = await apiFetch(`/api/admin/${key}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
           const json = await res.json().catch(() => ({}));
           return [key, res.ok ? json.requests || [] : []];
         }),

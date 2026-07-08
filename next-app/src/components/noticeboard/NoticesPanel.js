@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import PageHeader from '@/components/PageHeader';
+import { apiFetch } from '@/lib/apiFetch';
 
 const inputCls =
   'bg-[var(--color-bg)] border border-[var(--color-card-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text-main)] focus:outline-none focus:border-[var(--color-purple)]';
@@ -25,7 +26,7 @@ export default function NoticesPanel() {
     setError('');
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/admin/notices', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+      const res = await apiFetch('/api/admin/notices', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setNotices(json.notices || []);

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { apiFetch } from '@/lib/apiFetch';
 
 const STATUS_FILTERS = ['pending', 'approved', 'rejected', 'cancelled', 'all'];
 const STATUS_STYLE = {
@@ -45,7 +46,7 @@ export default function RemoteApprovalsPanel() {
     try {
       const token = localStorage.getItem('token');
       const qs = status === 'all' ? '' : `?status=${status}`;
-      const res = await fetch(`/api/admin/remote${qs}`, {
+      const res = await apiFetch(`/api/admin/remote${qs}`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: 'no-store',
       });

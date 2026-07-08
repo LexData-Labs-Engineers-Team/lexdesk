@@ -7,6 +7,7 @@ import EmployeeAvatar from '@/components/EmployeeAvatar';
 import MonthNav from '@/components/MonthNav';
 import { useAttendData } from '@/lib/useAttendData';
 import { perEmployeeStats, fmtTime, onlyStaff, inBdMonth } from '@/lib/attend';
+import { apiFetch } from '@/lib/apiFetch';
 
 const PAGE_SIZES = [10, 25, 50];
 // Canonical departments — always offered even before their team doc exists.
@@ -42,7 +43,7 @@ export default function EmployeesPanel() {
   const authHeader = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 
   const loadTeams = useCallback(() => {
-    fetch('/api/teams', { headers: authHeader(), cache: 'no-store' })
+    apiFetch('/api/teams', { headers: authHeader(), cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { teams: [] }))
       .then((j) => setTeams(j.teams || []))
       .catch(() => setTeams([]));

@@ -5,6 +5,7 @@ import PageHeader from '@/components/PageHeader';
 import KpiCard from '@/components/KpiCard';
 import MonthNav from '@/components/MonthNav';
 import { leaveOverlapsMonth } from '@/lib/attend';
+import { apiFetch } from '@/lib/apiFetch';
 
 const STATUS_BADGE = {
   pending: 'bg-[rgba(234,179,8,0.15)] text-[var(--color-yellow)]',
@@ -87,7 +88,7 @@ function LeavePanel() {
     setError('');
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/me/leave', {
+      const res = await apiFetch('/api/me/leave', {
         headers: { Authorization: `Bearer ${token}` },
         cache: 'no-store',
       });
@@ -110,7 +111,7 @@ function LeavePanel() {
   // first approver (the line manager) unless the user already picked one.
   useEffect(() => {
     const token = localStorage.getItem('token');
-    fetch('/api/me/leave-meta', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+    apiFetch('/api/me/leave-meta', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : {}))
       .then((j) => {
         setLeaveMeta(j || null);
@@ -388,7 +389,7 @@ function AssetsPanel() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/me/asset', { headers: authHeader(), cache: 'no-store' });
+      const res = await apiFetch('/api/me/asset', { headers: authHeader(), cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setRequests(json.requests || []);

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { firebaseAdmin } from './firebase';
-import { Paths } from './paths';
+import { sql } from './db';
 import { ORG_ID } from './config';
 import { isManager } from './services/teams';
 import { clientIpFromHeaders } from './ip';
@@ -9,8 +9,8 @@ import { enforceLoginGuards, isRestrictedRole } from './services/loginGuard';
 // Mobile auth: the Android app sends a Firebase ID token (Bearer). We verify it
 // with the Admin SDK and resolve the user's role. Single-org, so orgId is
 // pinned to ORG_ID. role comes from the token's custom claims, falling back to
-// userIndex/{uid} then the org user doc (seed/createEmployee write both). This
-// is SEPARATE from the web's getUserFromRequest (LexDesk JWT) — both coexist.
+// the org user row (users.role). This is SEPARATE from the web's
+// getUserFromRequest (LexDesk JWT) — both coexist.
 
 export class MobileAuthError extends Error {
   constructor(status, code) {
@@ -25,7 +25,7 @@ export async function getMobileUser(request) {
   if (!header.startsWith('Bearer ')) throw new MobileAuthError(401, 'missing_bearer_token');
   const token = header.slice(7).trim();
 
-  const { auth, db } = firebaseAdmin();
+  const { auth } = firebaseAdmin();
   let decoded;
   try {
     decoded = await auth.verifyIdToken(token, true);
@@ -37,12 +37,8 @@ export async function getMobileUser(request) {
   const email = decoded.email || '';
   let role = decoded.role;
   if (!role) {
-    const idx = await db.doc(Paths.userIndex(uid)).get();
-    if (idx.exists) role = idx.data().role;
-  }
-  if (!role) {
-    const u = await db.doc(Paths.user(ORG_ID, uid)).get();
-    if (u.exists) role = u.data().role;
+    const rows = await sql`SELECT role FROM users WHERE firebase_uid = ${uid} AND org_id = ${ORG_ID}`;
+    if (rows.length) role = rows[0].role;
   }
   if (!role) throw new MobileAuthError(403, 'missing_claims');
 

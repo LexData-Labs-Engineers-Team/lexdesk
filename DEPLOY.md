@@ -26,8 +26,12 @@ client that talks to whatever URL `next-app` is hosted at.
    Must-not-get-wrong:
    - `LEXDESK_ORG_ID` — must equal the existing org id, or the site shows **no data**.
    - `QR_TOKEN_SECRET` — must match AttendDesk's value, or QR check-in breaks.
-   - `FIREBASE_SERVICE_ACCOUNT` / `STORAGE_FIREBASE_SERVICE_ACCOUNT` — same Firebase
-     project as today ⇒ same data; no migration.
+   - `DATABASE_URL` — the Neon **pooled** connection string (host contains
+     `-pooler`, `?sslmode=require`). The app **data** lives here (see the Database
+     section below). Without it, every data route 500s.
+   - `FIREBASE_SERVICE_ACCOUNT` / `STORAGE_FIREBASE_SERVICE_ACCOUNT` — Firebase now
+     serves **Auth + profile-photo Storage only** (the data moved to Neon). Same
+     Firebase project as today ⇒ logins and photos keep working unchanged.
 
 5. **Deploy**, then **Project → Settings → Domains → Add** `teamos.lexdatalabs.com`.
    Because the `lexdatalabs.com` zone is already on this Vercel account, Vercel
@@ -42,6 +46,51 @@ client that talks to whatever URL `next-app` is hosted at.
 
 The old `lexdesk-dhaka.vercel.app` project can stay or be deleted — both are just
 clients of the same Firebase project.
+
+## Database — Neon Postgres
+
+The app's **data** lives in Neon Postgres (Firestore was retired to escape the
+Spark 50K-reads/day cap). **Firebase Auth** (login, ID tokens, custom claims) and
+**Firebase Storage** (profile photos) stay on Firebase — no app/APK change, no
+user re-login. The join key is `users.firebase_uid` = the Firebase Auth uid.
+
+### One-time provisioning
+
+1. **Provision Neon** via the Vercel Marketplace: Vercel dashboard → your
+   `lexdesk` project → **Storage / Integrations → Neon → Create**. Vercel injects
+   `DATABASE_URL` (pooled) and usually `DATABASE_URL_UNPOOLED` (direct) into the
+   project's env. Copy both into `next-app/.env.local` for local runs.
+2. **Apply the schema** (idempotent): run `next-app/db/schema.sql` against the DB
+   (Neon SQL editor, or `psql "$DATABASE_URL_UNPOOLED" -f next-app/db/schema.sql`).
+
+### One-time data migration (Firestore → Neon)
+
+Run from `next-app/`, **right after the ~1 PM BDT Spark daily reset** so the export
+has a fresh 50K read budget:
+
+```sh
+node scripts/migrate-firestore-to-neon.mjs --count      # pre-flight doc counts (cheap)
+node scripts/migrate-firestore-to-neon.mjs --dry-run    # transform check, no writes
+node scripts/migrate-firestore-to-neon.mjs              # full migration (idempotent)
+```
+
+If `--count` reports a total near/over 50K, add `--skip=locationPings` (high-volume
+telemetry) to stay under the cap, or run in two post-reset windows. The script
+preserves doc ids and prints a per-collection read/written/total reconciliation.
+
+### Cutover (big-bang, ~15–30 min off-peak)
+
+1. Apply `schema.sql` to the **production** Neon DB; deploy the Postgres build to a
+   Vercel **preview** and smoke-test it first.
+2. After the 1 PM reset, announce a short freeze; run the migration; verify counts.
+3. Promote the build to **production** with `DATABASE_URL` set; Firebase Auth/Storage
+   env vars unchanged. Verify login + check-in + approvals, then lift the freeze.
+4. Leave Firestore in place (read-only backup) for a grace period. **Point of no
+   return:** once users write to Postgres, rolling back loses post-cutover writes.
+
+Bootstrap scripts `scripts/seed.mjs` / `scripts/seed-superadmin.mjs` now write the
+admin/superadmin row to Postgres (they still create the Firebase Auth user); they
+need `DATABASE_URL` too.
 
 ## Android app
 

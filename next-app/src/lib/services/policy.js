@@ -1,15 +1,29 @@
-import { firebaseAdmin, FieldValue } from '../firebase';
-import { Paths } from '../paths';
+import { sql } from '../db';
+import { tsToIso } from '../rows';
+import { buildUpdateSet } from '../rows';
 import { FACE_EMBEDDING_DIM, FACE_EMBEDDING_MODEL } from './face';
 
-// Org attendance policy (single doc). Ported from AttendDesk; same response
+// Org attendance policy (single row). Ported from AttendDesk; same response
 // shape (policy + face embedding metadata).
 
-export async function getPolicy(orgId) {
-  const { db } = firebaseAdmin();
-  const snap = await db.doc(Paths.policy(orgId)).get();
+function mapPolicy(row) {
+  if (!row) return null;
   return {
-    policy: snap.exists ? snap.data() : null,
+    requireWifi: row.require_wifi,
+    requireIp: row.require_ip,
+    requireGeo: row.require_geo,
+    requireQr: row.require_qr,
+    requireFace: row.require_face,
+    faceThreshold: row.face_threshold,
+    gpsAccuracyMaxMeters: row.gps_accuracy_max_meters,
+    updatedAt: tsToIso(row.updated_at),
+  };
+}
+
+export async function getPolicy(orgId) {
+  const rows = await sql`SELECT * FROM policy WHERE org_id = ${orgId}`;
+  return {
+    policy: mapPolicy(rows[0] || null),
     faceEmbeddingDim: FACE_EMBEDDING_DIM,
     faceEmbeddingModel: FACE_EMBEDDING_MODEL,
   };
@@ -17,12 +31,25 @@ export async function getPolicy(orgId) {
 
 // body: { requireWifi, requireGeo, requireQr, requireFace, faceThreshold, gpsAccuracyMaxMeters }
 export async function updatePolicy(body, orgId) {
-  const { db } = firebaseAdmin();
-  const ref = db.doc(Paths.policy(orgId));
-  await ref.set({ ...body, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
-  const snap = await ref.get();
+  const { setClause, params } = buildUpdateSet(body, { startIndex: 2 });
+  // params start at $2; $1 is org_id.
+  if (setClause) {
+    const text = `INSERT INTO policy (org_id, ${
+      setClause.replace(/=\$\d+/g, '')
+    }) VALUES ($1, ${
+      params.map((_, i) => `$${i + 2}`).join(', ')
+    }) ON CONFLICT (org_id) DO UPDATE SET ${setClause}, updated_at = now()`;
+    await sql.query(text, [orgId, ...params]);
+  } else {
+    // No fields to merge: ensure a row exists (bump updated_at on conflict).
+    await sql.query(
+      `INSERT INTO policy (org_id) VALUES ($1) ON CONFLICT (org_id) DO UPDATE SET updated_at = now()`,
+      [orgId]
+    );
+  }
+  const rows = await sql`SELECT * FROM policy WHERE org_id = ${orgId}`;
   return {
-    policy: snap.exists ? snap.data() : null,
+    policy: mapPolicy(rows[0] || null),
     faceEmbeddingDim: FACE_EMBEDDING_DIM,
     faceEmbeddingModel: FACE_EMBEDDING_MODEL,
   };

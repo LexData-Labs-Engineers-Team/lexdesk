@@ -1,27 +1,23 @@
-import { firebaseAdmin, FieldValue } from '../firebase';
-import { Paths } from '../paths';
+import { sql } from '../db';
+import { tsToIso } from '../rows';
 import { getEmployees } from './users';
 
 // Teams — ported from AttendDesk. Leader is an employee uid + denormalized name.
 
-function toIso(v) {
-  if (v && typeof v.toDate === 'function') return v.toDate().toISOString();
-  return typeof v === 'string' ? v : null;
-}
-
 export async function getTeams(orgId) {
-  const { db } = firebaseAdmin();
-  const snap = await db.collection(Paths.teams(orgId)).orderBy('name', 'asc').get();
-  const teams = snap.docs.map((d) => {
-    const data = d.data() ?? {};
-    return {
-      id: d.id,
-      name: data.name ?? '',
-      leaderUid: data.leaderUid ?? null,
-      leaderName: data.leaderName ?? null,
-      createdAt: toIso(data.createdAt),
-    };
-  });
+  const rows = await sql`
+    SELECT id, name, leader_uid, leader_name, created_at
+      FROM teams
+     WHERE org_id = ${orgId}
+     ORDER BY name ASC
+  `;
+  const teams = rows.map((r) => ({
+    id: r.id,
+    name: r.name ?? '',
+    leaderUid: r.leader_uid ?? null,
+    leaderName: r.leader_name ?? null,
+    createdAt: tsToIso(r.created_at),
+  }));
   return { teams };
 }
 
@@ -29,62 +25,68 @@ export async function getTeams(orgId) {
 // when the user has no team or the team has no leader.
 export async function getLineManager(orgId, teamId) {
   if (!teamId) return null;
-  const { db } = firebaseAdmin();
-  const snap = await db.doc(Paths.team(orgId, teamId)).get();
-  if (!snap.exists) return null;
-  return snap.data()?.leaderName || null;
+  const rows = await sql`
+    SELECT leader_name FROM teams WHERE id = ${teamId} AND org_id = ${orgId}
+  `;
+  if (rows.length === 0) return null;
+  return rows[0].leader_name || null;
 }
 
 // body: { name, leaderUid? }
 export async function createTeam(body, orgId) {
-  const { db } = firebaseAdmin();
   let leaderUid = body.leaderUid ?? null;
   let leaderName = null;
   if (leaderUid) {
-    const u = await db.doc(Paths.user(orgId, leaderUid)).get();
-    if (u.exists) leaderName = u.data()?.name ?? null;
+    const u = await sql`
+      SELECT name FROM users WHERE firebase_uid = ${leaderUid} AND org_id = ${orgId}
+    `;
+    if (u.length > 0) leaderName = u[0].name ?? null;
     else leaderUid = null;
   }
-  const ref = await db.collection(Paths.teams(orgId)).add({
-    name: body.name,
-    leaderUid,
-    leaderName,
-    createdAt: FieldValue.serverTimestamp(),
-    createdBy: 'lexdesk',
-  });
-  return { id: ref.id };
+  const rows = await sql`
+    INSERT INTO teams (org_id, name, leader_uid, leader_name, created_at, created_by)
+    VALUES (${orgId}, ${body.name}, ${leaderUid}, ${leaderName}, now(), 'lexdesk')
+    RETURNING id
+  `;
+  return { id: rows[0].id };
 }
 
 // body: { name?, leaderUid? }  (leaderUid:null clears the leader)
 export async function updateTeam(id, body, orgId) {
-  const { db } = firebaseAdmin();
-  const ref = db.doc(Paths.team(orgId, id));
-  const snap = await ref.get();
-  if (!snap.exists) throw Object.assign(new Error('not_found'), { status: 404 });
-  const data = snap.data() ?? {};
+  const existing = await sql`
+    SELECT name, leader_uid, leader_name FROM teams WHERE id = ${id} AND org_id = ${orgId}
+  `;
+  if (existing.length === 0) throw Object.assign(new Error('not_found'), { status: 404 });
+  const data = existing[0];
   const name = body.name !== undefined ? body.name : (data.name ?? '');
-  let leaderUid = data.leaderUid ?? null;
-  let leaderName = data.leaderName ?? null;
+  let leaderUid = data.leader_uid ?? null;
+  let leaderName = data.leader_name ?? null;
   if (body.leaderUid !== undefined) {
     if (body.leaderUid) {
-      const u = await db.doc(Paths.user(orgId, body.leaderUid)).get();
+      const u = await sql`
+        SELECT name FROM users WHERE firebase_uid = ${body.leaderUid} AND org_id = ${orgId}
+      `;
       leaderUid = body.leaderUid;
-      leaderName = u.exists ? (u.data()?.name ?? null) : null;
+      leaderName = u.length > 0 ? (u[0].name ?? null) : null;
     } else {
       leaderUid = null;
       leaderName = null;
     }
   }
-  await ref.set({ name, leaderUid, leaderName }, { merge: true });
+  await sql`
+    UPDATE teams
+       SET name = ${name}, leader_uid = ${leaderUid}, leader_name = ${leaderName}
+     WHERE id = ${id} AND org_id = ${orgId}
+  `;
   return { ok: true };
 }
 
 export async function deleteTeam(id, orgId) {
-  const { db } = firebaseAdmin();
-  const ref = db.doc(Paths.team(orgId, id));
-  const snap = await ref.get();
-  if (!snap.exists) throw Object.assign(new Error('not_found'), { status: 404 });
-  await ref.delete();
+  const existing = await sql`
+    SELECT id FROM teams WHERE id = ${id} AND org_id = ${orgId}
+  `;
+  if (existing.length === 0) throw Object.assign(new Error('not_found'), { status: 404 });
+  await sql`DELETE FROM teams WHERE id = ${id} AND org_id = ${orgId}`;
   return { ok: true };
 }
 

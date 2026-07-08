@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getMobileUser, mobileAuthError } from '@/lib/mobileAuth';
-import { firebaseAdmin } from '@/lib/firebase';
-import { Paths } from '@/lib/paths';
+import { sql } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,12 +13,13 @@ export async function DELETE(request) {
     return mobileAuthError(e);
   }
   try {
-    const { db } = firebaseAdmin();
-    await db.doc(Paths.user(user.orgId, user.uid)).update({
-      faceEmbeddingB64: null,
-      faceEmbeddingModel: null,
-      faceEnrolledAt: null,
-    });
+    await sql`
+      UPDATE users
+      SET face_embedding_b64 = NULL,
+          face_embedding_model = NULL,
+          face_enrolled_at = NULL
+      WHERE firebase_uid = ${user.uid} AND org_id = ${user.orgId}
+    `;
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: e.status || 500 });

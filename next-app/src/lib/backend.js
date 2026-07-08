@@ -4,8 +4,7 @@
 // from '@/lib/attenddesk' to '@/lib/backend'. The trailing orgId arg now equals
 // the pinned ORG_ID the login JWT carries.
 
-import { firebaseAdmin } from './firebase';
-import { Paths } from './paths';
+import { sql } from './db';
 import { processCheckIn, listAttendance } from './services/attendance';
 
 export { signedReadUrls } from './storage';
@@ -52,10 +51,9 @@ export function getAttendance(query = {}, orgId) {
 // Check-in: body carries userId (forced from the token by the route). We look
 // up the email for the event record, then run the full anti-cheat pipeline.
 export async function checkIn(body, orgId) {
-  const { db } = firebaseAdmin();
-  const snap = await db.doc(Paths.user(orgId, body.userId)).get();
-  if (!snap.exists) throw Object.assign(new Error('user_not_found'), { status: 404 });
-  const email = snap.data().email ?? '';
+  const rows = await sql`SELECT email FROM users WHERE firebase_uid = ${body.userId} AND org_id = ${orgId}`;
+  if (!rows.length) throw Object.assign(new Error('user_not_found'), { status: 404 });
+  const email = rows[0].email ?? '';
   return processCheckIn(body.userId, orgId, email, body);
 }
 

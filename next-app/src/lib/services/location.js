@@ -1,5 +1,5 @@
-import { firebaseAdmin, FieldValue } from '../firebase';
-import { Paths } from '../paths';
+import { sql } from '../db';
+import { buildInsert } from '../rows';
 import { getFeatures } from './features';
 
 // Background-location ping from the Android client (audit-only). Ported from
@@ -52,28 +52,34 @@ export async function recordLocationPing(orgId, uid, email, body) {
         ? Math.max(1000, (features.location.continuousIntervalSeconds * 1000) / 2)
         : 10000;
 
-  const { db } = firebaseAdmin();
-  const userRef = db.doc(Paths.user(orgId, uid));
-  const userSnap = await userRef.get();
-  const lastPingAt = userSnap.exists ? userSnap.data()?.lastLocationPingAt : undefined;
-  if (lastPingAt?.toMillis && Date.now() - lastPingAt.toMillis() < minIntervalMs) {
+  const userRows = await sql`
+    SELECT last_location_ping_at FROM users
+    WHERE firebase_uid = ${uid} AND org_id = ${orgId}
+  `;
+  const lastPingAt = userRows[0]?.last_location_ping_at;
+  if (lastPingAt && Date.now() - new Date(lastPingAt).getTime() < minIntervalMs) {
     const retryAfter = Math.ceil(minIntervalMs / 1000);
     reject(429, { error: 'rate_limited', retryAfterSeconds: retryAfter }, { 'Retry-After': String(retryAfter) });
   }
 
+  const ins = buildInsert('location_pings', {
+    orgId,
+    uid,
+    email,
+    lat,
+    lng,
+    accuracy,
+    capturedAt: new Date(capturedAt),
+    source,
+    isMockLocation: !!body.isMockLocation,
+  });
+
   await Promise.all([
-    db.collection(Paths.locationPings(orgId)).add({
-      uid,
-      email,
-      lat,
-      lng,
-      accuracy,
-      capturedAt: new Date(capturedAt),
-      serverReceivedAt: FieldValue.serverTimestamp(),
-      source,
-      isMockLocation: !!body.isMockLocation,
-    }),
-    userRef.set({ lastLocationPingAt: FieldValue.serverTimestamp() }, { merge: true }).catch(() => undefined),
+    sql.query(ins.text, ins.params),
+    sql`
+      UPDATE users SET last_location_ping_at = now()
+      WHERE firebase_uid = ${uid} AND org_id = ${orgId}
+    `.catch(() => undefined),
   ]);
   return { ok: true };
 }

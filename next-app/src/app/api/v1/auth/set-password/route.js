@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getMobileUser, mobileAuthError } from '@/lib/mobileAuth';
 import { firebaseAdmin } from '@/lib/firebase';
-import { Paths } from '@/lib/paths';
+import { sql } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -27,10 +27,10 @@ export async function POST(request) {
   }
 
   try {
-    const { auth, db } = firebaseAdmin();
+    const { auth } = firebaseAdmin();
     await auth.updateUser(user.uid, { password: newPassword });
     await auth.revokeRefreshTokens(user.uid);
-    await db.doc(Paths.user(user.orgId, user.uid)).update({ mustChangePassword: false });
+    await sql`UPDATE users SET must_change_password = false WHERE firebase_uid = ${user.uid} AND org_id = ${user.orgId}`;
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: e.status || 500 });

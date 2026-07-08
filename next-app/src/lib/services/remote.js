@@ -1,5 +1,5 @@
-import { firebaseAdmin, FieldValue } from '../firebase';
-import { Paths } from '../paths';
+import { sql, withTransaction } from '../db';
+import { tsToIso } from '../rows';
 import { createRequestService } from './requestKit';
 
 // Remote WORK SESSION: an employee taps Start (reason + optional location) →
@@ -11,17 +11,16 @@ import { createRequestService } from './requestKit';
 // status lifecycle: working → pending → approved | rejected ; cancelled (from working/pending)
 
 const svc = createRequestService({
-  collection: (orgId) => Paths.remoteRequests(orgId),
-  doc: (orgId, id) => Paths.remoteRequest(orgId, id),
-  pick: (d) => ({
-    day: d.day ?? '',
-    reason: d.reason ?? '',
-    place: d.place ?? '',
-    lat: typeof d.lat === 'number' ? d.lat : null,
-    lng: typeof d.lng === 'number' ? d.lng : null,
-    startedAt: d.startedAt?.toDate?.()?.toISOString?.() ?? (typeof d.startedAt === 'string' ? d.startedAt : null),
-    endedAt: d.endedAt?.toDate?.()?.toISOString?.() ?? (typeof d.endedAt === 'string' ? d.endedAt : null),
-    durationMinutes: typeof d.durationMinutes === 'number' ? d.durationMinutes : null,
+  table: 'remote_requests',
+  pick: (row) => ({
+    day: row.day ?? '',
+    reason: row.reason ?? '',
+    place: row.place ?? '',
+    lat: typeof row.lat === 'number' ? row.lat : null,
+    lng: typeof row.lng === 'number' ? row.lng : null,
+    startedAt: tsToIso(row.started_at),
+    endedAt: tsToIso(row.ended_at),
+    durationMinutes: row.duration_minutes ?? null,
   }),
   build: () => ({}), // remote creates via startRemote below, not the generic submit
 });
@@ -40,75 +39,77 @@ function todayDhaka() {
 // START a remote work session. One active ('working') session per user at a time.
 // Exported as submitRemote too so the existing POST route keeps working.
 export async function startRemote(body, orgId) {
-  const { db } = firebaseAdmin();
   const uid = body.userId;
-  const userSnap = await db.doc(Paths.user(orgId, uid)).get();
-  if (!userSnap.exists) throw Object.assign(new Error('user_not_found'), { status: 404 });
-  const u = userSnap.data();
+  const users = await sql`SELECT email, name FROM users WHERE firebase_uid = ${uid} AND org_id = ${orgId}`;
+  if (!users.length) throw Object.assign(new Error('user_not_found'), { status: 404 });
+  const u = users[0];
   const reason = String(body.reason ?? '').trim();
   if (!reason) throw Object.assign(new Error('reason_required'), { status: 400 });
 
-  // Guard: block a second concurrent session. Single-field (uid) query → no
-  // composite index; the per-user set is tiny, so filter status in memory.
-  const mine = await db.collection(Paths.remoteRequests(orgId)).where('uid', '==', uid).get();
-  if (mine.docs.some((doc) => doc.data()?.status === 'working')) {
-    throw Object.assign(new Error('already_working'), { status: 409 });
+  // The partial unique index uq_remote_one_working enforces one active session
+  // per (org_id, uid); a concurrent 'working' insert collides -> 23505.
+  try {
+    const rows = await sql`
+      INSERT INTO remote_requests
+        (org_id, uid, user_email, user_name, day, reason, place, lat, lng,
+         status, started_at, ended_at, duration_minutes, created_at,
+         decided_at, decided_by, decision_note)
+      VALUES
+        (${orgId}, ${uid}, ${u.email ?? ''}, ${u.name || u.email || ''},
+         ${todayDhaka()}, ${reason}, ${String(body.place ?? '').trim()},
+         ${typeof body.lat === 'number' ? body.lat : null},
+         ${typeof body.lng === 'number' ? body.lng : null},
+         'working', now(), NULL, NULL, now(), NULL, NULL, NULL)
+      RETURNING id`;
+    return { id: rows[0].id, status: 'working' };
+  } catch (e) {
+    if (e && e.code === '23505') throw Object.assign(new Error('already_working'), { status: 409 });
+    throw e;
   }
-
-  const ref = await db.collection(Paths.remoteRequests(orgId)).add({
-    uid,
-    userEmail: u.email ?? '',
-    userName: u.name || u.email || '',
-    day: todayDhaka(),
-    reason,
-    place: String(body.place ?? '').trim(),
-    lat: typeof body.lat === 'number' ? body.lat : null,
-    lng: typeof body.lng === 'number' ? body.lng : null,
-    status: 'working',
-    startedAt: FieldValue.serverTimestamp(),
-    endedAt: null,
-    durationMinutes: null,
-    createdAt: FieldValue.serverTimestamp(),
-    decidedAt: null,
-    decidedBy: null,
-    decisionNote: null,
-  });
-  return { id: ref.id, status: 'working' };
 }
 export const submitRemote = (body, orgId) => startRemote(body, orgId);
 
 // DONE — the owner ends their 'working' session. Duration is computed from the
 // SERVER timestamps (never the client clock) and the session goes to 'pending'.
 export async function doneRemote(orgId, uid, id) {
-  const { db } = firebaseAdmin();
-  const ref = db.doc(Paths.remoteRequest(orgId, id));
-  const durationMinutes = await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists) throw Object.assign(new Error('not_found'), { status: 404 });
-    const d = snap.data() ?? {};
+  const durationMinutes = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      'SELECT uid, status, started_at FROM remote_requests WHERE id = $1 AND org_id = $2 FOR UPDATE',
+      [id, orgId],
+    );
+    if (!rows.length) throw Object.assign(new Error('not_found'), { status: 404 });
+    const d = rows[0];
     if (String(d.uid) !== String(uid)) throw Object.assign(new Error('forbidden'), { status: 403 });
     if (d.status !== 'working') throw Object.assign(new Error('not_working'), { status: 409 });
-    const startedMs = d.startedAt?.toDate?.()?.getTime?.() ?? null;
+    const startedMs = d.started_at instanceof Date ? d.started_at.getTime() : null;
     const mins = startedMs ? Math.max(0, Math.round((Date.now() - startedMs) / 60000)) : 0;
-    tx.update(ref, { status: 'pending', endedAt: FieldValue.serverTimestamp(), durationMinutes: mins });
+    await client.query(
+      "UPDATE remote_requests SET status = 'pending', ended_at = now(), duration_minutes = $1 WHERE id = $2",
+      [mins, id],
+    );
     return mins;
   });
-  return { ok: true, durationMinutes, request: svc.rowFromDoc(await ref.get()) };
+  const fresh = await sql`SELECT * FROM remote_requests WHERE id = ${id}`;
+  return { ok: true, durationMinutes, request: svc.rowFromRow(fresh[0]) };
 }
 
 // Owner cancels — allowed while 'working' (discard) or 'pending' (withdraw).
 export async function cancelMyRemote(orgId, uid, id) {
-  const { db } = firebaseAdmin();
-  const ref = db.doc(Paths.remoteRequest(orgId, id));
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists) throw Object.assign(new Error('not_found'), { status: 404 });
-    const d = snap.data() ?? {};
+  await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      'SELECT uid, status FROM remote_requests WHERE id = $1 AND org_id = $2 FOR UPDATE',
+      [id, orgId],
+    );
+    if (!rows.length) throw Object.assign(new Error('not_found'), { status: 404 });
+    const d = rows[0];
     if (String(d.uid) !== String(uid)) throw Object.assign(new Error('forbidden'), { status: 403 });
     if (d.status !== 'working' && d.status !== 'pending') {
       throw Object.assign(new Error('not_cancellable'), { status: 409 });
     }
-    tx.update(ref, { status: 'cancelled', decidedAt: FieldValue.serverTimestamp(), decidedBy: uid, decisionNote: null });
+    await client.query(
+      "UPDATE remote_requests SET status = 'cancelled', decided_at = now(), decided_by = $1, decision_note = NULL WHERE id = $2",
+      [uid, id],
+    );
   });
   return { ok: true };
 }

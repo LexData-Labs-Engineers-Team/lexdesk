@@ -1,5 +1,5 @@
-import { firebaseAdmin, FieldValue } from '../firebase';
-import { Paths } from '../paths';
+import { sql, withTransaction } from '../db';
+import { tsToIso, buildInsert } from '../rows';
 import { getLineManager } from './teams';
 
 // Leave requests — ported from AttendDesk's leaveRequests.ts (single-org, no
@@ -20,49 +20,46 @@ function inclusiveDayCount(fromDay, toDay) {
   return Math.round((end - start) / 86_400_000) + 1;
 }
 
-function toIso(v) {
-  if (!v) return null;
-  if (typeof v.toDate === 'function') return v.toDate().toISOString();
-  return null;
-}
-
-function rowFromDoc(doc) {
-  const d = doc.data() ?? {};
+function rowFromRow(row) {
+  const d = row ?? {};
   const legacyReason = typeof d.reason === 'string' ? d.reason : '';
   return {
-    id: doc.id,
+    id: d.id,
     uid: d.uid ?? '',
-    userEmail: d.userEmail ?? '',
-    userName: d.userName ?? '',
-    fromDay: d.fromDay ?? '',
-    toDay: d.toDay ?? '',
-    totalDays: typeof d.totalDays === 'number' ? d.totalDays : 0,
-    leaveType: d.leaveType ?? null,
-    halfDayPeriod: d.halfDayPeriod ?? null,
+    userEmail: d.user_email ?? '',
+    userName: d.user_name ?? '',
+    fromDay: d.from_day ?? '',
+    toDay: d.to_day ?? '',
+    totalDays: typeof d.total_days === 'number' ? d.total_days : Number(d.total_days ?? 0),
+    leaveType: d.leave_type ?? null,
+    halfDayPeriod: d.half_day_period ?? null,
     department: d.department ?? null,
-    lineManager: d.lineManager ?? null,
-    approvedBy: d.approvedBy ?? null,
+    lineManager: d.line_manager ?? null,
+    approvedBy: d.approved_by ?? null,
     subject: d.subject ?? (legacyReason ? 'Leave request' : ''),
     details: d.details ?? legacyReason,
     status: d.status ?? 'pending',
-    createdAt: toIso(d.createdAt),
-    decidedAt: toIso(d.decidedAt),
-    decidedBy: d.decidedBy ?? null,
-    decisionNote: d.decisionNote ?? null,
+    createdAt: tsToIso(d.created_at),
+    decidedAt: tsToIso(d.decided_at),
+    decidedBy: d.decided_by ?? null,
+    decisionNote: d.decision_note ?? null,
   };
 }
 
 export async function getLeaveRequests(query = {}, orgId) {
-  const { db } = firebaseAdmin();
-  let q = db.collection(Paths.leaveRequests(orgId));
-  if (query.status) q = q.where('status', '==', query.status);
-  const snap = await q.get();
-  const requests = snap.docs.map(rowFromDoc).sort((a, b) => {
-    if (a.status === 'pending' && b.status !== 'pending') return -1;
-    if (b.status === 'pending' && a.status !== 'pending') return 1;
-    if (a.fromDay !== b.fromDay) return a.fromDay < b.fromDay ? 1 : -1;
-    return a.id < b.id ? 1 : -1;
-  });
+  let rows;
+  if (query.status) {
+    rows = await sql`
+      SELECT * FROM leave_requests
+      WHERE org_id = ${orgId} AND status = ${query.status}
+      ORDER BY (status = 'pending') DESC, from_day DESC, id DESC`;
+  } else {
+    rows = await sql`
+      SELECT * FROM leave_requests
+      WHERE org_id = ${orgId}
+      ORDER BY (status = 'pending') DESC, from_day DESC, id DESC`;
+  }
+  const requests = rows.map(rowFromRow);
   return { requests };
 }
 
@@ -87,14 +84,16 @@ export async function submitLeave(body, orgId) {
     totalDays = inclusiveDayCount(body.fromDay, body.toDay);
   }
 
-  const { db } = firebaseAdmin();
-  const userSnap = await db.doc(Paths.user(orgId, body.userId)).get();
-  if (!userSnap.exists) throw Object.assign(new Error('user_not_found'), { status: 404 });
-  const u = userSnap.data();
-  const department = u.department || u.teamName || null;
-  const lineManager = await getLineManager(orgId, u.teamId ?? null);
+  const userRows = await sql`
+    SELECT * FROM users WHERE firebase_uid = ${body.userId} AND org_id = ${orgId}`;
+  if (userRows.length === 0) throw Object.assign(new Error('user_not_found'), { status: 404 });
+  const u = userRows[0];
+  const department = u.department || u.team_name || null;
+  const lineManager = await getLineManager(orgId, u.team_id ?? null);
   const approvedBy = String(body.approvedBy || '').trim() || null;
-  const ref = await db.collection(Paths.leaveRequests(orgId)).add({
+
+  const { text, params } = buildInsert('leave_requests', {
+    orgId,
     uid: body.userId,
     userEmail: u.email ?? '',
     userName: u.name || u.email || '',
@@ -109,60 +108,63 @@ export async function submitLeave(body, orgId) {
     subject: body.subject,
     details: body.details ?? '',
     status: 'pending',
-    createdAt: FieldValue.serverTimestamp(),
     decidedAt: null,
     decidedBy: null,
     decisionNote: null,
-  });
-  return { id: ref.id };
+  }, { returning: 'id' });
+  const rows = await sql.query(text, params);
+  return { id: rows[0].id };
 }
 
 // Mobile: a user's OWN leave requests (equality-only query, client sort).
 export async function listMyLeaveRequests(orgId, uid) {
-  const { db } = firebaseAdmin();
-  const snap = await db.collection(Paths.leaveRequests(orgId)).where('uid', '==', uid).get();
-  const requests = snap.docs.map(rowFromDoc).sort((a, b) => {
-    if (a.fromDay !== b.fromDay) return a.fromDay < b.fromDay ? 1 : -1;
-    return a.id < b.id ? 1 : -1;
-  });
+  const rows = await sql`
+    SELECT * FROM leave_requests
+    WHERE org_id = ${orgId} AND uid = ${uid}
+    ORDER BY from_day DESC, id DESC`;
+  const requests = rows.map(rowFromRow);
   return { requests };
 }
 
 // Mobile: cancel one of the caller's OWN pending requests.
 export async function cancelMyLeaveRequest(orgId, uid, id) {
-  const { db } = firebaseAdmin();
-  const ref = db.doc(Paths.leaveRequest(orgId, id));
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists) throw Object.assign(new Error('not_found'), { status: 404 });
-    const data = snap.data() ?? {};
+  const request = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      'SELECT * FROM leave_requests WHERE org_id = $1 AND id = $2 FOR UPDATE',
+      [orgId, id]
+    );
+    if (rows.length === 0) throw Object.assign(new Error('not_found'), { status: 404 });
+    const data = rows[0];
     if (String(data.uid) !== String(uid)) throw Object.assign(new Error('forbidden'), { status: 403 });
     if (data.status !== 'pending') throw Object.assign(new Error('not_pending'), { status: 409 });
-    tx.update(ref, {
-      status: 'cancelled',
-      decidedAt: FieldValue.serverTimestamp(),
-      decidedBy: uid,
-      decisionNote: null,
-    });
+    const { rows: updated } = await client.query(
+      `UPDATE leave_requests
+         SET status = 'cancelled', decided_at = now(), decided_by = $1, decision_note = NULL
+       WHERE org_id = $2 AND id = $3
+       RETURNING *`,
+      [uid, orgId, id]
+    );
+    return rowFromRow(updated[0]);
   });
-  const fresh = await ref.get();
-  return { request: rowFromDoc(fresh) };
+  return { request };
 }
 
 export async function decideLeave(id, decision, note, orgId) {
-  const { db } = firebaseAdmin();
-  const ref = db.doc(Paths.leaveRequest(orgId, id));
-  await db.runTransaction(async (tx) => {
-    const snap = await tx.get(ref);
-    if (!snap.exists) throw Object.assign(new Error('not_found'), { status: 404 });
-    if ((snap.data() ?? {}).status !== 'pending') throw Object.assign(new Error('not_pending'), { status: 409 });
-    tx.update(ref, {
-      status: decision,
-      decidedAt: FieldValue.serverTimestamp(),
-      decidedBy: 'lexdesk',
-      decisionNote: note ?? null,
-    });
+  const request = await withTransaction(async (client) => {
+    const { rows } = await client.query(
+      'SELECT * FROM leave_requests WHERE org_id = $1 AND id = $2 FOR UPDATE',
+      [orgId, id]
+    );
+    if (rows.length === 0) throw Object.assign(new Error('not_found'), { status: 404 });
+    if (rows[0].status !== 'pending') throw Object.assign(new Error('not_pending'), { status: 409 });
+    const { rows: updated } = await client.query(
+      `UPDATE leave_requests
+         SET status = $1, decided_at = now(), decided_by = 'lexdesk', decision_note = $2
+       WHERE org_id = $3 AND id = $4
+       RETURNING *`,
+      [decision, note ?? null, orgId, id]
+    );
+    return rowFromRow(updated[0]);
   });
-  const fresh = await ref.get();
-  return { ok: true, request: rowFromDoc(fresh) };
+  return { ok: true, request };
 }

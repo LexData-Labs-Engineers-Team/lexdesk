@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { signToken, publicUser, verifyFirebasePassword, roleToLexdesk, initialsFromName } from '@/lib/auth';
-import { firebaseAdmin } from '@/lib/firebase';
-import { Paths } from '@/lib/paths';
+import { sql } from '@/lib/db';
 import { ORG_ID } from '@/lib/config';
 import { clientIpFromHeaders } from '@/lib/ip';
 import { enforceLoginGuards } from '@/lib/services/loginGuard';
@@ -82,15 +81,18 @@ export async function POST(request) {
   // is the source of truth for role/name. Wrapped so any Firestore/config
   // failure returns JSON (not an unhandled HTML 500 the client can't parse).
   try {
-    const { db } = firebaseAdmin();
-    const snap = await db.doc(Paths.user(ORG_ID, verified.uid)).get();
-    if (!snap.exists) {
+    const rows = await sql`
+      SELECT role, name, employee_id
+      FROM users
+      WHERE firebase_uid = ${verified.uid} AND org_id = ${ORG_ID}
+    `;
+    if (rows.length === 0) {
       return NextResponse.json(
         { error: 'This account is not part of your organization. Ask your admin to add you.' },
         { status: 401 },
       );
     }
-    const data = snap.data();
+    const data = rows[0];
     const name = data.name || verified.email || email;
     const user = {
       id: verified.uid,
@@ -98,7 +100,7 @@ export async function POST(request) {
       name,
       role: roleToLexdesk(data.role),
       avatar: initialsFromName(name),
-      employeeId: data.employeeId ?? null,
+      employeeId: data.employee_id ?? null,
       orgId: ORG_ID,
     };
 

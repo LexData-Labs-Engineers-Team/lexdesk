@@ -1,6 +1,5 @@
-import { firebaseAdmin, FieldValue } from '../firebase';
-import { Paths } from '../paths';
-import { getTeams } from './teams';
+import { sql } from '../db';
+import { buildInsert } from '../rows';
 import { setEmployeeRole } from './users';
 
 // Management-role assignment. Two assignable roles:
@@ -13,29 +12,40 @@ import { setEmployeeRole } from './users';
 export const DEPARTMENTS = ['Engineering', 'Marketing', 'Project'];
 const ROLES = ['team_leader', 'it', 'dev'];
 
-async function findOrCreateDeptTeam(db, orgId, department) {
-  const { teams } = await getTeams(orgId);
-  const existing = teams.find((t) => t.name.toLowerCase() === department.toLowerCase());
-  if (existing) return existing.id;
-  const ref = await db.collection(Paths.teams(orgId)).add({
-    name: department,
-    leaderUid: null,
-    leaderName: null,
-    createdAt: FieldValue.serverTimestamp(),
-    createdBy: 'lexdesk',
-  });
-  return ref.id;
+async function findOrCreateDeptTeam(orgId, department) {
+  const existing = await sql`
+    SELECT id, name FROM teams
+    WHERE org_id = ${orgId} AND lower(name) = ${department.toLowerCase()}
+    LIMIT 1
+  `;
+  if (existing.length) return { id: existing[0].id, name: existing[0].name };
+
+  const { text, params } = buildInsert(
+    'teams',
+    {
+      orgId,
+      name: department,
+      leaderUid: null,
+      leaderName: null,
+      createdBy: 'lexdesk',
+    },
+    { returning: 'id, name' },
+  );
+  const rows = await sql.query(text, params);
+  return { id: rows[0].id, name: rows[0].name };
 }
 
 export async function assignManagementRole(orgId, { uid, department, role }) {
   if (!uid) throw Object.assign(new Error('Select an employee'), { status: 400 });
   if (!ROLES.includes(role)) throw Object.assign(new Error('Pick a valid role'), { status: 400 });
 
-  const { db } = firebaseAdmin();
-  const userRef = db.doc(Paths.user(orgId, uid));
-  const snap = await userRef.get();
-  if (!snap.exists) throw Object.assign(new Error('not_found'), { status: 404 });
-  const data = snap.data() ?? {};
+  const userRows = await sql`
+    SELECT name, role FROM users
+    WHERE firebase_uid = ${uid} AND org_id = ${orgId}
+    LIMIT 1
+  `;
+  if (!userRows.length) throw Object.assign(new Error('not_found'), { status: 404 });
+  const data = userRows[0];
   const current = String(data.role || '').toUpperCase();
   if (current === 'ADMIN' || current === 'SUPER_ADMIN') {
     throw Object.assign(new Error('cannot_change_admin_role'), { status: 403 });
@@ -43,14 +53,18 @@ export async function assignManagementRole(orgId, { uid, department, role }) {
 
   if (role === 'team_leader') {
     if (!DEPARTMENTS.includes(department)) throw Object.assign(new Error('Pick a valid department'), { status: 400 });
-    const teamId = await findOrCreateDeptTeam(db, orgId, department);
-    const teamSnap = await db.doc(Paths.team(orgId, teamId)).get();
-    const teamName = teamSnap.data()?.name ?? department;
-    await userRef.update({ department, teamId, teamName });
-    await db.doc(Paths.team(orgId, teamId)).set(
-      { leaderUid: uid, leaderName: data.name ?? null },
-      { merge: true },
-    );
+    const team = await findOrCreateDeptTeam(orgId, department);
+    const teamName = team.name ?? department;
+    await sql`
+      UPDATE users
+      SET department = ${department}, team_id = ${team.id}, team_name = ${teamName}
+      WHERE firebase_uid = ${uid} AND org_id = ${orgId}
+    `;
+    await sql`
+      UPDATE teams
+      SET leader_uid = ${uid}, leader_name = ${data.name ?? null}
+      WHERE id = ${team.id} AND org_id = ${orgId}
+    `;
     return { ok: true, role: 'team_leader', department };
   }
 

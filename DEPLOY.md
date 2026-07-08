@@ -97,10 +97,10 @@ need `DATABASE_URL` too.
 Neon's free tier auto-suspends the compute after ~5 min idle, so the first request
 after a quiet spell pays a wake latency and can time out. A Vercel Cron
 (`next-app/vercel.json`) pings `/api/cron/keep-warm` every 4 min **during work hours
-only** — `*/4 2-13 * * 0-4` (UTC) = **08:00–19:59 BDT, Sun–Thu** — to hold the compute
-awake when people actually use the app. It is scoped to work hours/days on purpose:
-24/7 keep-warm would exceed Neon's free **100 CU-hours/month**; the work-hours window
-is ≈60 CU-hours. Optionally set `CRON_SECRET` (Vercel env) to require
+only** — `*/4 2-11 * * 0-4` (UTC) = **08:00–~18:00 BDT (8am–6pm), Sun–Thu** — to hold
+the compute awake when people actually use the app. It is scoped to work hours/days on
+purpose: 24/7 keep-warm would exceed Neon's free **100 CU-hours/month**; the work-hours
+window is ≈55 CU-hours. Optionally set `CRON_SECRET` (Vercel env) to require
 `Authorization: Bearer <secret>` on that endpoint. Off-hours the DB still sleeps; the
 web (`apiFetch`) and the Android app both **retry a failed GET once** so an off-hours
 cold start self-heals instead of showing "couldn't load".

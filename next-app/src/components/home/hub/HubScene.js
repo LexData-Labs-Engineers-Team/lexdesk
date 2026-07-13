@@ -7,7 +7,7 @@
 // Ship state is written to a shared ref each frame for the radar + sounds —
 // pointer parallax likewise — so neither re-renders React.
 
-import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Environment, Lightformer, Float, Html, Grid, Trail, MeshDistortMaterial, useCursor } from '@react-three/drei';
@@ -119,15 +119,45 @@ function Asteroids({ count = 130, shipRef, selected }) {
       near.current[i] = isNear;
     }
   });
+  // Two instanced meshes (one per detail level) instead of `count` separate
+  // meshes — same look, ~2 draw calls instead of ~130.
+  const split = useMemo(() => ({
+    smooth: rocks.filter((r) => r.detail === 0),
+    rough: rocks.filter((r) => r.detail === 1),
+  }), [rocks]);
   return (
     <group ref={group}>
-      {rocks.map((r, i) => (
-        <mesh key={i} position={r.p} rotation={r.rot} scale={r.s}>
-          <icosahedronGeometry args={[1, r.detail]} />
-          <meshStandardMaterial color="#8b9099" metalness={0.4} roughness={0.85} flatShading />
-        </mesh>
-      ))}
+      <RockCluster rocks={split.smooth} detail={0} />
+      <RockCluster rocks={split.rough} detail={1} />
     </group>
+  );
+}
+
+function RockCluster({ rocks, detail }) {
+  const inst = useRef();
+  useLayoutEffect(() => {
+    if (!inst.current) return;
+    const m = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const p = new THREE.Vector3();
+    const s = new THREE.Vector3();
+    rocks.forEach((r, i) => {
+      e.set(r.rot[0], r.rot[1], r.rot[2]);
+      q.setFromEuler(e);
+      p.set(r.p[0], r.p[1], r.p[2]);
+      s.setScalar(r.s);
+      m.compose(p, q, s);
+      inst.current.setMatrixAt(i, m);
+    });
+    inst.current.instanceMatrix.needsUpdate = true;
+  }, [rocks]);
+  if (!rocks.length) return null;
+  return (
+    <instancedMesh ref={inst} args={[undefined, undefined, rocks.length]}>
+      <icosahedronGeometry args={[1, detail]} />
+      <meshStandardMaterial color="#8b9099" metalness={0.4} roughness={0.85} flatShading />
+    </instancedMesh>
   );
 }
 
@@ -432,7 +462,9 @@ function Coin({ x, z, born }) {
         <sphereGeometry args={[0.6, 16, 16]} />
         <meshBasicMaterial color="#ffffff" transparent opacity={0.12} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
-      <pointLight color="#ffffff" intensity={1.8} distance={3.8} />
+      {/* No pointLight here on purpose: with up to 16 coins alive, per-coin
+          lights ballooned the lighting cost of every material in the scene.
+          The emissive disc + glow halo carry the look on their own. */}
     </group>
   );
 }
@@ -670,7 +702,7 @@ export default function HubScene({ selected, focused, warping, lowPerf, onSelect
       <Player selected={selected} warping={warping} onSelect={onSelect} onFocusChange={onFocusChange} onBoost={onBoost} pointer={pointer} control={control} shipRef={shipRef} />
 
       {!lowPerf && (
-        <EffectComposer>
+        <EffectComposer multisampling={4}>
           <Bloom intensity={0.9} luminanceThreshold={0.25} luminanceSmoothing={0.3} mipmapBlur radius={0.78} />
           <Vignette offset={0.3} darkness={0.86} />
         </EffectComposer>

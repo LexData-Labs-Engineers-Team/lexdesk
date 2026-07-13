@@ -176,4 +176,45 @@ export const audio = {
   blip: () => tone({ freq: 880, dur: 0.07, type: 'sine', gain: 0.06 }),
   // boost engaged — a low rising sweep
   boost: () => tone({ freq: 150, dur: 0.35, type: 'sawtooth', gain: 0.05, slideTo: 320 }),
+
+  /* ------- race mode ------- */
+  // countdown tick — a clipped square pip
+  count: () => tone({ freq: 660, dur: 0.09, type: 'square', gain: 0.08 }),
+  // GO — a hard rising blast
+  go: () => {
+    tone({ freq: 523, dur: 0.5, type: 'sawtooth', gain: 0.12, slideTo: 1046 });
+    tone({ freq: 262, dur: 0.5, type: 'square', gain: 0.07, slideTo: 523 });
+  },
+  // threading a gate — a clean two-note confirmation
+  gate: () => {
+    tone({ freq: 740, dur: 0.09, type: 'triangle', gain: 0.12 });
+    tone({ freq: 1108, dur: 0.16, type: 'triangle', gain: 0.1, delay: 0.05 });
+  },
+  // hull contact (rock or rival) — a dull metallic thud
+  clank: () => {
+    const c = ensure();
+    if (!c || !master) return;
+    const t0 = c.currentTime;
+    const src = c.createBufferSource();
+    src.buffer = getNoise(c);
+    const lp = c.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(900, t0);
+    lp.frequency.exponentialRampToValueAtTime(120, t0 + 0.22);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.22, t0 + 0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.24);
+    src.connect(lp); lp.connect(g); g.connect(master);
+    src.start(t0);
+    src.stop(t0 + 0.26);
+    tone({ freq: 90, dur: 0.18, type: 'sine', gain: 0.14, slideTo: 45 });
+  },
+  // boost pad pickup — an energized upward zip
+  pad: () => tone({ freq: 880, dur: 0.18, type: 'sawtooth', gain: 0.08, slideTo: 1760 }),
+  // final lap bell
+  bell: () => {
+    tone({ freq: 1318, dur: 0.4, type: 'triangle', gain: 0.12 });
+    tone({ freq: 1318, dur: 0.4, type: 'triangle', gain: 0.1, delay: 0.22 });
+  },
 };

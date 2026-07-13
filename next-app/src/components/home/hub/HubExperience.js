@@ -8,6 +8,7 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import { Canvas } from '@react-three/fiber';
 import HubScene from './HubScene';
 import HubHud from './HubHud';
@@ -17,13 +18,25 @@ import Joystick from './Joystick';
 import { audio } from './audio';
 import { STATIONS_BY_ID } from './stations';
 
+// The multiplayer race arena — loaded only when a pilot actually enters it.
+const RaceExperience = dynamic(() => import('../race/RaceExperience'), {
+  ssr: false,
+  loading: () => (
+    <div className="hub-boot">
+      <span className="hub-boot__ring" />
+      <span className="hub-boot__text">Entering the arena…</span>
+    </div>
+  ),
+});
+
 const COMBO_WINDOW = 3000; // ms to chain a coin and keep the multiplier alive
 
 export default function HubExperience({ onExit, lowPerf = false }) {
   const [selected, setSelected] = useState(null);
   const [focused, setFocused] = useState(null);
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(() => audio.isMuted());
   const [warping, setWarping] = useState(false);
+  const [raceMode, setRaceMode] = useState(false);
   const [touch, setTouch] = useState(false);
   const [score, setScore] = useState(0);
   const [best, setBest] = useState(0);
@@ -146,13 +159,34 @@ export default function HubExperience({ onExit, lowPerf = false }) {
     audio.setMuted(m);
   };
 
+  // Warp out of the hub and into the race arena (and back).
+  const enterRace = useCallback(() => {
+    audio.dock();
+    setWarping(true);
+    setTimeout(() => {
+      setSelected(null);
+      setWarping(false);
+      setRaceMode(true);
+    }, 420);
+  }, []);
+  const exitRace = useCallback(() => {
+    setRaceMode(false);
+    setMuted(audio.isMuted()); // the race has its own mute toggle over the shared audio — re-sync the hub icon
+    setWarping(true);
+    setTimeout(() => setWarping(false), 700);
+  }, []);
+
   const focusedStation = focused ? STATIONS_BY_ID[focused] : null;
+
+  if (raceMode) {
+    return <RaceExperience lowPerf={lowPerf} touch={touch} onExit={exitRace} />;
+  }
 
   return (
     <div className="hub-root" onPointerMove={onPointerMove}>
       <Canvas
         className={`hub-canvas${warping ? ' hub-shake' : ''}`}
-        dpr={lowPerf ? [1, 1.25] : [1, 1.75]}
+        dpr={lowPerf ? [1, 1.25] : [1, 1.5]}
         gl={{ antialias: !lowPerf, alpha: false, powerPreference: 'high-performance' }}
         camera={{ position: [0, 3.9, -18], fov: 50 }}
       >
@@ -254,7 +288,7 @@ export default function HubExperience({ onExit, lowPerf = false }) {
         </div>
       )}
 
-      <HubHud selected={selected} onBack={() => setSelected(null)} />
+      <HubHud selected={selected} onBack={() => setSelected(null)} onEnterRace={enterRace} />
     </div>
   );
 }

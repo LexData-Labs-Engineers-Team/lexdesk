@@ -299,9 +299,50 @@ function PulsePanel({ station, onBack }) {
   );
 }
 
-const PANELS = { signin: SignInPanel, join: JoinPanel, features: FeaturesPanel, pulse: PulsePanel, app: AppPanel };
+function RacePanel({ station, onBack, onEnterRace }) {
+  const [arena, setArena] = useState(undefined); // undefined = probing, null = offline
 
-export default function HubHud({ selected, onBack }) {
+  // Probe the race server so the panel can show who's already on the grid.
+  useEffect(() => {
+    let on = true;
+    import('../race/raceNet').then(({ peekArena }) =>
+      peekArena().then((info) => { if (on) setArena(info); })
+    );
+    return () => { on = false; };
+  }, []);
+
+  return (
+    <HudCard station={station} onBack={onBack}>
+      <div className="text-center">
+        <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-2xl bg-white/10 text-[var(--color-text-main)]">
+          <svg xmlns="http://www.w3.org/2000/svg" width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 15c-1 0-2-1-2-2s1-2 2-2h3l6-5 7 2v6l-7 2-6-5" transform="rotate(-15 12 12)" /><path d="m14 19 2 3" /><path d="m10 19-2 3" /></svg>
+        </div>
+        <h2 className="text-2xl font-bold mb-1 text-[var(--color-text-main)]">Nebula Grand Prix</h2>
+        <p className="text-sm text-[var(--color-text-muted)] mb-5 leading-relaxed">
+          Race your teammates live — same track, same asteroids, real collisions.
+          Three laps, twelve gates, one podium. The grid arms at 2 pilots.
+        </p>
+        <div className="race-panel-status" data-state={arena === undefined ? 'probing' : arena ? 'online' : 'offline'}>
+          <span className="race-panel-status__dot" />
+          {arena === undefined
+            ? 'Reaching the arena…'
+            : arena
+              ? arena.pilots > 0
+                ? `${arena.pilots} pilot${arena.pilots === 1 ? '' : 's'} in the arena${arena.phase === 'racing' ? ' — race in progress' : ''}`
+                : 'Arena online — grid is empty'
+              : 'Arena offline — race server not running'}
+        </div>
+        <button type="button" className="btn-primary inline-flex px-7 py-3.5 text-[0.95rem]" onClick={onEnterRace}>
+          Enter the arena
+        </button>
+      </div>
+    </HudCard>
+  );
+}
+
+const PANELS = { signin: SignInPanel, join: JoinPanel, features: FeaturesPanel, pulse: PulsePanel, app: AppPanel, race: RacePanel };
+
+export default function HubHud({ selected, onBack, onEnterRace }) {
   if (!selected) return null;
   const station = STATIONS_BY_ID[selected];
   const Panel = PANELS[selected];
@@ -309,7 +350,7 @@ export default function HubHud({ selected, onBack }) {
 
   return (
     <div className="hub-hud" key={selected}>
-      <Panel station={station} onBack={onBack} />
+      <Panel station={station} onBack={onBack} onEnterRace={onEnterRace} />
     </div>
   );
 }

@@ -63,6 +63,7 @@ function broadcast(obj, exceptId = null) {
 }
 
 const clampNum = (v, lo, hi) => (Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : 0);
+const wrapAngle = (v) => (Number.isFinite(v) ? Math.atan2(Math.sin(v), Math.cos(v)) : 0);
 const cleanName = (s) =>
   String(s ?? '').replace(/[^\w \-'.]/g, '').trim().slice(0, 14) || `PILOT-${Math.floor(100 + Math.random() * 900)}`;
 
@@ -122,6 +123,7 @@ function startRace() {
   for (const p of players.values()) {
     const racing = room.grid.includes(p.id);
     p.spectator = !racing;
+    if (!racing) p.state = null; // stop relaying a demoted pilot's stale ship
     p.finished = false;
     p.place = null;
     p.timeMs = null;
@@ -251,6 +253,7 @@ wss.on('connection', (ws) => {
     }
 
     if (m.t === 'hello') {
+      if (me) return; // already registered on this socket — ignore repeat hellos
       me = {
         id: nextId++,
         ws,
@@ -296,7 +299,9 @@ wss.on('connection', (ws) => {
       case 'state': {
         me.state = {
           x: clampNum(m.x, -500, 500), y: clampNum(m.y, -50, 120), z: clampNum(m.z, -500, 500),
-          h: clampNum(m.h, -Math.PI * 2, Math.PI * 2), k: clampNum(m.k, -1.2, 1.2),
+          // wrap (not clamp) the heading — clamping a value that legitimately
+          // winds past ±2π over laps would freeze the ship's yaw for everyone.
+          h: wrapAngle(m.h), k: clampNum(m.k, -1.2, 1.2),
           s: clampNum(m.s, -20, 60), b: !!m.b,
         };
         if (room.phase === 'racing' && !me.spectator && !me.finished) {

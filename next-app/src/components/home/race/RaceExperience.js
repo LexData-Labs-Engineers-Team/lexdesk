@@ -41,6 +41,9 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
   const identity = useMemo(loadIdentity, []);
   const [callsign, setCallsign] = useState(identity.name);
   const [hue, setHue] = useState(identity.hue);
+  // Live mirror of the identity, so the (mount-once) reconnect handler always
+  // re-sends the CURRENT callsign/hue instead of stale mount-time values.
+  const identityRef = useRef({ name: identity.name, hue: identity.hue });
 
   const [conn, setConn] = useState('connecting'); // connecting | open | lost
   const [selfId, setSelfId] = useState(null);
@@ -75,14 +78,17 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
     const map = playersRef.current;
     const ids = new Set();
     for (const p of list) {
-      if (p.id === self) continue;
+      // Skip self and spectators: spectators never uplink state, so a rec for
+      // them would sit forever at the sentinel and render as a ghost ship /
+      // phantom minimap dot. They reappear as real ships once they're racing.
+      if (p.id === self || p.spectator) continue;
       ids.add(p.id);
       const rec = map.get(p.id);
       if (rec) {
         rec.name = p.name;
         rec.hue = p.hue;
       } else {
-        map.set(p.id, { id: p.id, name: p.name, hue: p.hue, buf: [], cur: new THREE.Vector3(0, -999, 0), speed: 0, heading: 0 });
+        map.set(p.id, { id: p.id, name: p.name, hue: p.hue, buf: [], cur: new THREE.Vector3(0, -999, 0), speed: 0, heading: 0, placed: false });
       }
     }
     for (const id of [...map.keys()]) if (!ids.has(id)) map.delete(id);
@@ -97,7 +103,7 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
         if (s === 'open') {
           everOpenRef.current = true;
           setConn('open');
-          net.send({ t: 'hello', name: callsign, hue });
+          net.send({ t: 'hello', name: identityRef.current.name, hue: identityRef.current.hue });
         } else if (s === 'closed') {
           setConn('lost');
         }
@@ -190,14 +196,14 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
   }, [conn, spectating]);
 
   /* ---------------------------------------------------------- audio bed */
+  // The ambient drone + engine are shared singletons owned by the hub. We make
+  // sure they're running (no-ops if the hub already started them) but must NOT
+  // stop them on unmount — the hub is still mounted underneath and would be
+  // left permanently silent after leaving the arena.
   useEffect(() => {
     audio.init();
     audio.startAmbient();
     audio.engineStart();
-    return () => {
-      audio.stopAmbient();
-      audio.engineStop();
-    };
   }, []);
 
   useEffect(() => {
@@ -208,10 +214,12 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
   /* ------------------------------------------------------------ actions */
   const handleProfile = useCallback((patch) => {
     if (patch.name) {
+      identityRef.current.name = patch.name;
       setCallsign(patch.name);
       try { localStorage.setItem('teamos_callsign', patch.name); } catch {}
     }
     if (patch.hue !== undefined) {
+      identityRef.current.hue = patch.hue;
       setHue(patch.hue);
       try { localStorage.setItem('teamos_pilot_hue', String(patch.hue)); } catch {}
     }

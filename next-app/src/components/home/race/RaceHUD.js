@@ -17,7 +17,7 @@ export const RULES = [
   ['Asteroids', 'Rocks on the racing line kill your pace. Thread or lose.'],
   ['Boost', 'Shift (or joystick rim) burns the boost cell. Chevron pads refill it instantly.'],
   ['Slipstream', 'Tuck in behind a rival to charge boost faster and gain top speed.'],
-  ['Off-track', 'Outside the outer rails your engines choke. Press R to respawn at your last gate.'],
+  ['Off-track', 'Outside the outer rails your engines choke — you’re auto-placed back on the track after a moment (or press R to respawn instantly).'],
   ['Podium', 'First three across the line take the podium. Everyone’s time is recorded.'],
 ];
 
@@ -25,9 +25,12 @@ const PILOT_HUES = [0, 32, 58, 132, 174, 204, 262, 318];
 
 const fmtTime = (ms) => {
   if (ms == null) return '—';
-  const m = Math.floor(ms / 60000);
-  const s = ((ms % 60000) / 1000).toFixed(2);
-  return `${m}:${String(s).padStart(5, '0')}`;
+  // Round to centiseconds FIRST, then split — so a value like 119996ms carries
+  // into the minute (2:00.00) instead of rendering the invalid 1:60.00.
+  const cs = Math.round(ms / 10);
+  const m = Math.floor(cs / 6000);
+  const s = ((cs % 6000) / 100).toFixed(2);
+  return `${m}:${s.padStart(5, '0')}`;
 };
 const ordinal = (n) => (n === 1 ? '1ST' : n === 2 ? '2ND' : n === 3 ? '3RD' : `${n}TH`);
 
@@ -343,7 +346,10 @@ export function StandingsRail({ standings, players, selfId }) {
       {standings.slice(0, 8).map((r, i) => {
         const p = byId[r.id];
         if (!p) return null;
-        const gap = r.finished ? fmtTime(r.timeMs) : i === 0 ? 'leader' : `-${Math.max(0, leader - r.prog).toFixed(1)} gates`;
+        const behind = Math.max(0, leader - r.prog);
+        // "leader" for P1 or anyone level with it (the whole pre-GO grid sits at
+        // prog 0) — avoids the nonsensical "-0.0 gates" readout.
+        const gap = r.finished ? fmtTime(r.timeMs) : i === 0 || behind < 0.05 ? 'leader' : `-${behind.toFixed(1)} gates`;
         return (
           <li
             key={r.id}
@@ -431,7 +437,11 @@ export function TrackMap({ playersRef, shipStateRef, selfId, selfHue }) {
       if (host) {
         const recs = [...playersRef.current.values()];
         const self = shipStateRef.current;
-        const want = recs.length + (self ? 1 : 0);
+        // Only ships with a live position get a dot — a rec still at the
+        // sentinel (just joined the grid, no snapshot yet) would otherwise
+        // stamp a phantom dot dead-center on the map.
+        const live = recs.filter((r) => r.placed && r.cur.y > -100);
+        const want = live.length + (self ? 1 : 0);
         while (host.children.length < want) {
           const c = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
           c.setAttribute('r', '2.6');
@@ -446,7 +456,7 @@ export function TrackMap({ playersRef, shipStateRef, selfId, selfHue }) {
           el.setAttribute('fill', `hsl(${selfHue} 85% 65%)`);
           el.setAttribute('r', '3.2');
         }
-        for (const rec of recs) {
+        for (const rec of live) {
           const [x, y] = fit.current.map(rec.cur.x, rec.cur.z);
           const el = host.children[i++];
           if (!el) break;
@@ -488,9 +498,11 @@ export function Podium({ results, selfId, onExit }) {
         <div className="race-podium__tiers">
           {[1, 0, 2].map((slot) => {
             const r = podium[slot];
-            if (!r) return <div key={slot} className="race-tier is-empty" />;
+            // Key by slot always — server ids are small ints (1,2,…) that would
+            // otherwise collide with the empty-tier slot keys in the same list.
+            if (!r) return <div key={`slot-${slot}`} className="race-tier is-empty" />;
             return (
-              <div key={r.id} className={`race-tier is-p${slot + 1}${r.id === selfId ? ' is-you' : ''}`} style={{ '--pilot': `hsl(${r.hue} 85% 62%)` }}>
+              <div key={`slot-${slot}`} className={`race-tier is-p${slot + 1}${r.id === selfId ? ' is-you' : ''}`} style={{ '--pilot': `hsl(${r.hue} 85% 62%)` }}>
                 <span className="race-tier__place">{ordinal(slot + 1)}</span>
                 <span className="race-tier__dot" />
                 <span className="race-tier__name">{r.name}</span>

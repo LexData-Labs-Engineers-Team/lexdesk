@@ -10,7 +10,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
-import { Environment, Lightformer, Html, Trail } from '@react-three/drei';
+import { Environment, Lightformer, Html, Trail, Grid } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
 import { ChromaticAberrationEffect } from 'postprocessing';
 import { getTrack, genObstacles, nearestSample, gridSlot, GATE_COUNT, LAPS, CORRIDOR, GATE_RADIUS } from './trackData';
@@ -100,7 +100,41 @@ function TrackRibbon() {
     return g;
   }, [track]);
 
-  const rails = useMemo(() => {
+  // A narrower, brighter centre lane laid over the wide faint apron — gives the
+  // road a lit racing line instead of one flat translucent sheet.
+  const centreLane = useMemo(() => {
+    const { samples } = track;
+    const n = samples.length;
+    const w = RAIL_OFFSET * 0.5;
+    const pos = new Float32Array((n + 1) * 2 * 3);
+    const idx = [];
+    for (let i = 0; i <= n; i++) {
+      const s = samples[i % n];
+      const o = i * 6;
+      pos[o] = s.p.x - s.nrm.x * w; pos[o + 1] = s.p.y - 0.48; pos[o + 2] = s.p.z - s.nrm.z * w;
+      pos[o + 3] = s.p.x + s.nrm.x * w; pos[o + 4] = s.p.y - 0.48; pos[o + 5] = s.p.z + s.nrm.z * w;
+      if (i < n) { const a = i * 2; idx.push(a, a + 1, a + 2, a + 1, a + 3, a + 2); }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    return g;
+  }, [track]);
+
+  // Glowing edge rails as thin tubes (not flat lines) so they read as light.
+  const railTubes = useMemo(() => {
+    const { samples } = track;
+    const mk = (offset) => {
+      const pts = samples.filter((_, i) => i % 4 === 0).map((s) =>
+        new THREE.Vector3(s.p.x + s.nrm.x * offset, s.p.y - 0.34, s.p.z + s.nrm.z * offset));
+      const c = new THREE.CatmullRomCurve3(pts, true, 'centripetal');
+      return new THREE.TubeGeometry(c, 256, 0.13, 6, true);
+    };
+    return [mk(-RAIL_OFFSET), mk(RAIL_OFFSET)];
+  }, [track]);
+
+  // Faint outer-corridor boundary (the point past which engines choke).
+  const corridorLines = useMemo(() => {
     const { samples } = track;
     const mk = (offset) => {
       const pos = new Float32Array(samples.length * 3);
@@ -113,7 +147,7 @@ function TrackRibbon() {
       g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
       return g;
     };
-    return [mk(-RAIL_OFFSET), mk(RAIL_OFFSET), mk(-CORRIDOR), mk(CORRIDOR)];
+    return [mk(-CORRIDOR), mk(CORRIDOR)];
   }, [track]);
 
   const core = useMemo(() => new THREE.TubeGeometry(track.curve, 512, 0.1, 6, true), [track]);
@@ -121,14 +155,22 @@ function TrackRibbon() {
   return (
     <group>
       <mesh geometry={surface}>
-        <meshBasicMaterial color="#ffffff" transparent opacity={0.028} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.05} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
+      </mesh>
+      <mesh geometry={centreLane}>
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.08} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
       <mesh geometry={core} position={[0, -0.45, 0]}>
-        <meshBasicMaterial color="#ffffff" transparent opacity={0.4} blending={THREE.AdditiveBlending} depthWrite={false} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.55} blending={THREE.AdditiveBlending} depthWrite={false} />
       </mesh>
-      {rails.map((g, i) => (
+      {railTubes.map((g, i) => (
+        <mesh key={i} geometry={g}>
+          <meshBasicMaterial color="#ffffff" transparent opacity={0.7} blending={THREE.AdditiveBlending} depthWrite={false} />
+        </mesh>
+      ))}
+      {corridorLines.map((g, i) => (
         <lineLoop key={i} geometry={g}>
-          <lineBasicMaterial color="#ffffff" transparent opacity={i < 2 ? 0.32 : 0.09} blending={THREE.AdditiveBlending} depthWrite={false} />
+          <lineBasicMaterial color="#ffffff" transparent opacity={0.1} blending={THREE.AdditiveBlending} depthWrite={false} />
         </lineLoop>
       ))}
     </group>
@@ -155,10 +197,16 @@ function PulseRunners({ count = 12 }) {
   return (
     <group>
       {seeds.map((_, i) => (
-        <mesh key={i} ref={(el) => { refs.current[i] = el; }}>
-          <sphereGeometry args={[0.16, 8, 8]} />
-          <meshBasicMaterial color="#ffffff" transparent opacity={0.85} blending={THREE.AdditiveBlending} depthWrite={false} />
-        </mesh>
+        <group key={i} ref={(el) => { refs.current[i] = el; }}>
+          <mesh>
+            <sphereGeometry args={[0.17, 8, 8]} />
+            <meshBasicMaterial color="#ffffff" transparent opacity={0.95} blending={THREE.AdditiveBlending} depthWrite={false} />
+          </mesh>
+          <mesh>
+            <sphereGeometry args={[0.5, 10, 10]} />
+            <meshBasicMaterial color="#ffffff" transparent opacity={0.16} blending={THREE.AdditiveBlending} depthWrite={false} />
+          </mesh>
+        </group>
       ))}
     </group>
   );
@@ -168,29 +216,43 @@ function PulseRunners({ count = 12 }) {
 function Gate({ data, gateStateRef }) {
   const ring = useRef();
   const mat = useRef();
+  const halo = useRef();
   const beam = useRef();
   const disc = useRef();
   useFrame((st, delta) => {
     const gs = gateStateRef.current;
     const isNext = gs.next === data.idx && !gs.finished;
-    const pulse = isNext ? 1 + Math.sin(st.clock.elapsedTime * 4.5) * 0.035 : 1;
+    const wave = Math.sin(st.clock.elapsedTime * 4.5);
+    const pulse = isNext ? 1 + wave * 0.04 : 1;
     if (ring.current) ring.current.scale.setScalar(THREE.MathUtils.damp(ring.current.scale.x, pulse, 8, delta));
     if (mat.current) {
-      const target = isNext ? 1.6 : 0.35;
+      const target = isNext ? 2.2 : 0.55;
       mat.current.emissiveIntensity = THREE.MathUtils.damp(mat.current.emissiveIntensity, target, 6, delta);
     }
-    if (beam.current) beam.current.material.opacity = THREE.MathUtils.damp(beam.current.material.opacity, isNext ? 0.4 : 0, 6, delta);
-    if (disc.current) disc.current.material.opacity = THREE.MathUtils.damp(disc.current.material.opacity, isNext ? 0.1 : 0.03, 6, delta);
+    if (halo.current) halo.current.material.opacity = THREE.MathUtils.damp(halo.current.material.opacity, isNext ? 0.5 : 0.16, 6, delta);
+    if (beam.current) beam.current.material.opacity = THREE.MathUtils.damp(beam.current.material.opacity, isNext ? 0.42 : 0, 6, delta);
+    // Inner membrane shimmers on the active gate — a portal you punch through.
+    if (disc.current) {
+      const target = isNext ? 0.14 + wave * 0.05 : 0.035;
+      disc.current.material.opacity = THREE.MathUtils.damp(disc.current.material.opacity, target, 6, delta);
+    }
   });
   return (
     <group position={data.pos} quaternion={data.quat}>
+      {/* bright structural ring */}
       <mesh ref={ring}>
-        <torusGeometry args={[4.6, 0.09, 12, 72]} />
-        <meshStandardMaterial ref={mat} color="#ffffff" metalness={0.4} roughness={0.3} emissive="#ffffff" emissiveIntensity={0.35} />
+        <torusGeometry args={[4.6, 0.11, 14, 80]} />
+        <meshStandardMaterial ref={mat} color="#ffffff" metalness={0.5} roughness={0.25} emissive="#ffffff" emissiveIntensity={0.55} />
       </mesh>
+      {/* soft additive halo ring just outside it */}
+      <mesh ref={halo}>
+        <torusGeometry args={[4.62, 0.32, 8, 80]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.16} blending={THREE.AdditiveBlending} depthWrite={false} />
+      </mesh>
+      {/* inner membrane */}
       <mesh ref={disc}>
-        <circleGeometry args={[4.5, 40]} />
-        <meshBasicMaterial color="#ffffff" transparent opacity={0.03} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
+        <circleGeometry args={[4.5, 44]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.035} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
       {/* locator beam — visible across the arena, only on the next gate */}
       <mesh ref={beam} position={[0, 26, 0]}>
@@ -282,12 +344,17 @@ function ObstacleField({ obstacles }) {
 /* ----------------------------------------------------------- impact sparks */
 function ImpactBursts({ fxRef }) {
   const [, bump] = useState(0);
-  const prevLen = useRef(0);
+  const prevSig = useRef('');
   useFrame((st) => {
-    // retire old bursts; re-render only when the list actually changes
-    const alive = fxRef.current.filter((f) => st.clock.elapsedTime - f.born < 0.6);
-    if (alive.length !== fxRef.current.length) fxRef.current = alive;
-    if (alive.length !== prevLen.current) { prevLen.current = alive.length; bump((x) => x + 1); }
+    // Retire old bursts and re-render when the SET changes. Comparing only the
+    // length missed the case where one burst expires while another is appended
+    // in the same frame (equal length, different members) — so we key off a
+    // signature of length + newest key instead.
+    const cur = fxRef.current;
+    const alive = cur.filter((f) => st.clock.elapsedTime - f.born < 0.6);
+    if (alive.length !== cur.length) fxRef.current = alive;
+    const sig = `${alive.length}:${alive.length ? alive[alive.length - 1].key : ''}`;
+    if (sig !== prevSig.current) { prevSig.current = sig; bump((x) => x + 1); }
   });
   return (
     <group>
@@ -323,7 +390,10 @@ function RemoteShip({ rec, netRef }) {
     const g = group.current;
     if (!g) return;
     const buf = rec.buf;
-    if (!buf.length) return;
+    // No snapshots yet (a rival who just joined the grid, or a paused feed):
+    // keep the whole ship hidden rather than parking it at the world origin.
+    if (!buf.length) { g.visible = false; return; }
+    g.visible = true;
     const renderT = (netRef.current?.serverNow() ?? Date.now()) - INTERP_DELAY_MS;
 
     // Find the snapshot pair bracketing renderT and interpolate; if we're past
@@ -343,17 +413,26 @@ function RemoteShip({ rec, netRef }) {
       k = a.k + (b.k - a.k) * f;
       s = a.s + (b.s - a.s) * f;
     } else {
-      const over = Math.min((renderT - b.t) / 1000, 0.25);
+      // clamp to [0, 0.25]: a single-entry buffer makes renderT < b.t, which
+      // would otherwise dead-reckon *backwards* and pop the ship on spawn.
+      const over = THREE.MathUtils.clamp((renderT - b.t) / 1000, 0, 0.25);
       x = b.x + Math.sin(b.h) * b.s * over;
       y = b.y;
       z = b.z + Math.cos(b.h) * b.s * over;
       h = b.h; k = b.k; s = b.s;
     }
-    // One more smoothing layer hides snapshot-boundary corners.
-    g.position.x = THREE.MathUtils.damp(g.position.x, x, 18, delta);
-    g.position.y = THREE.MathUtils.damp(g.position.y, y, 18, delta);
-    g.position.z = THREE.MathUtils.damp(g.position.z, z, 18, delta);
-    g.rotation.y += shortestAngle(g.rotation.y, h) * smooth(delta, 14);
+    if (!rec.placed) {
+      // Snap to the first real position instead of sliding in from the origin.
+      g.position.set(x, y, z);
+      g.rotation.y = h;
+      rec.placed = true;
+    } else {
+      // One more smoothing layer hides snapshot-boundary corners.
+      g.position.x = THREE.MathUtils.damp(g.position.x, x, 18, delta);
+      g.position.y = THREE.MathUtils.damp(g.position.y, y, 18, delta);
+      g.position.z = THREE.MathUtils.damp(g.position.z, z, 18, delta);
+      g.rotation.y += shortestAngle(g.rotation.y, h) * smooth(delta, 14);
+    }
     g.rotation.z = THREE.MathUtils.damp(g.rotation.z, k, 12, delta);
     if (glow.current) glow.current.scale.setScalar(0.85 + Math.min(Math.abs(s) / 24, 1) * 0.9 + (b.b ? 0.45 : 0));
     rec.cur.set(g.position.x, g.position.y, g.position.z);
@@ -451,11 +530,12 @@ function nebulaTexture() {
 }
 
 function ArenaBackdrop({ lowPerf }) {
-  const starPositions = useMemo(() => {
-    const n = lowPerf ? 900 : 2200;
+  // Two star tiers: a sparse layer of bright near stars and a dense field of
+  // faint far stars, so the sky reads with real depth instead of one flat sheet.
+  const makeStars = (n, rMin, rSpread) => {
     const arr = new Float32Array(n * 3);
     for (let i = 0; i < n; i++) {
-      const r = 320 + Math.random() * 420;
+      const r = rMin + Math.random() * rSpread;
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
       arr[i * 3] = r * Math.sin(phi) * Math.cos(theta);
@@ -463,21 +543,31 @@ function ArenaBackdrop({ lowPerf }) {
       arr[i * 3 + 2] = r * Math.cos(phi);
     }
     return arr;
-  }, [lowPerf]);
+  };
+  const farStars = useMemo(() => makeStars(lowPerf ? 900 : 2400, 360, 420), [lowPerf]);
+  const nearStars = useMemo(() => makeStars(lowPerf ? 160 : 380, 220, 200), [lowPerf]);
   const tex = useMemo(() => nebulaTexture(), []);
   const clouds = useMemo(() => ([
-    { p: [-260, 90, -340], s: 420, o: 0.07 },
-    { p: [300, -40, -260], s: 380, o: 0.055 },
-    { p: [80, 160, 380], s: 460, o: 0.05 },
-    { p: [-340, -90, 220], s: 340, o: 0.045 },
+    { p: [-260, 90, -340], s: 460, o: 0.09 },
+    { p: [300, -40, -260], s: 400, o: 0.07 },
+    { p: [80, 160, 380], s: 500, o: 0.06 },
+    { p: [-340, -90, 220], s: 360, o: 0.055 },
+    { p: [180, 120, -300], s: 300, o: 0.05 },
+    { p: [-120, -140, -360], s: 340, o: 0.045 },
   ]), []);
   return (
     <group>
       <points>
         <bufferGeometry>
-          <bufferAttribute attach="attributes-position" args={[starPositions, 3]} />
+          <bufferAttribute attach="attributes-position" args={[farStars, 3]} />
         </bufferGeometry>
-        <pointsMaterial size={1.4} color="#ffffff" sizeAttenuation transparent opacity={0.8} depthWrite={false} blending={THREE.AdditiveBlending} />
+        <pointsMaterial size={1.3} color="#ffffff" sizeAttenuation transparent opacity={0.72} depthWrite={false} blending={THREE.AdditiveBlending} />
+      </points>
+      <points>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[nearStars, 3]} />
+        </bufferGeometry>
+        <pointsMaterial size={2.6} color="#ffffff" sizeAttenuation transparent opacity={0.95} depthWrite={false} blending={THREE.AdditiveBlending} />
       </points>
       {clouds.map((cl, i) => (
         <sprite key={i} position={cl.p} scale={[cl.s, cl.s, 1]}>
@@ -509,14 +599,16 @@ function SpectatorRig({ playersRef }) {
       new THREE.Vector3(Math.sin(t) * 150, 70 + Math.sin(t * 0.7) * 12, Math.cos(t) * 150),
       smooth(delta, 1.6)
     );
-    // Watch the pack: average the live ships, or the track center when empty.
-    const recs = [...playersRef.current.values()];
-    const target = new THREE.Vector3(0, 10, 0);
-    if (recs.length) {
-      target.set(0, 0, 0);
-      recs.forEach((r) => target.add(r.cur));
-      target.divideScalar(recs.length);
+    // Watch the pack: average the ships that have real positions. Recs that
+    // have never received a snapshot sit at the (0,-999,0) sentinel — averaging
+    // those in would drag the look-target far below the arena.
+    let n = 0;
+    const target = new THREE.Vector3();
+    for (const r of playersRef.current.values()) {
+      if (r.placed && r.cur.y > -100) { target.add(r.cur); n++; }
     }
+    if (n) target.divideScalar(n);
+    else target.set(0, 10, 0);
     look.current.lerp(target, smooth(delta, 2));
     camera.lookAt(look.current);
   });
@@ -539,7 +631,7 @@ function LocalPilot({
     energy: 1, lap: 0, next: 1, passed: 0, finished: false,
     hint: 0, wrongT: 0, invuln: 0, shake: 0, bumpCd: 0, obsCd: 0,
     lastCount: 99, launched: false, respawnGate: 0,
-    lapStart: 0, lastLapMs: 0, bestLapMs: 0,
+    lapStart: 0, lastLapMs: 0, bestLapMs: 0, offT: 0,
   }).current;
 
   // Personal best lap survives across sessions.
@@ -652,6 +744,7 @@ function LocalPilot({
     fwd.current.set(Math.sin(d.heading), 0, Math.cos(d.heading));
     if (racing) {
       for (const rec of playersRef.current.values()) {
+        if (!rec.placed || rec.cur.y < -100) continue; // no live position yet
         scratch.current.copy(rec.cur).sub(d.pos);
         const dist = scratch.current.length();
         if (dist > 1.6 && dist < 10 && rec.speed > 9) {
@@ -725,6 +818,7 @@ function LocalPilot({
     /* ---- ship-to-ship contact ---- */
     if (d.bumpCd <= 0) {
       for (const rec of playersRef.current.values()) {
+        if (!rec.placed || rec.cur.y < -100) continue; // skip ships with no live position yet
         const dx = d.pos.x - rec.cur.x, dy = d.pos.y - rec.cur.y, dz = d.pos.z - rec.cur.z;
         if (dx * dx + dy * dy + dz * dz < 1.5 * 1.5) {
           const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
@@ -801,10 +895,14 @@ function LocalPilot({
       if (along < -0.35 && Math.abs(d.speed) > 6) d.wrongT += dt;
       else d.wrongT = 0;
 
-      // manual respawn
-      if (k['r']) {
+      // Respawn: press R for an instant reset, OR get auto-placed back on the
+      // track after being stranded outside the rails too long. The auto path is
+      // what gives touch pilots (no keyboard) the advertised recovery.
+      d.offT = offTrack ? d.offT + dt : 0;
+      if (k['r'] || d.offT > 3.5) {
         respawn(d.respawnGate);
         k['r'] = false;
+        d.offT = 0;
       }
     }
 
@@ -830,8 +928,12 @@ function LocalPilot({
     }
     audio.engineSet(Math.abs(d.speed) / 26, boosting);
 
+    // Wrap heading into (-π, π] before transmitting. d.heading accumulates
+    // unbounded (a closed lap adds a net ±2π winding), so the raw value would
+    // otherwise blow past the server's relay range and freeze rivals' yaw.
     shipStateRef.current = {
-      x: d.pos.x, y: d.pos.y, z: d.pos.z, h: d.heading, k: d.bank,
+      x: d.pos.x, y: d.pos.y, z: d.pos.z,
+      h: Math.atan2(Math.sin(d.heading), Math.cos(d.heading)), k: d.bank,
       s: d.speed, b: boosting,
       prog: racing || d.finished ? d.passed + frac : 0,
       lap: d.lap,
@@ -910,9 +1012,9 @@ function RaceEffects({ telemetryRef }) {
   });
   return (
     <EffectComposer multisampling={4}>
-      <Bloom intensity={1.05} luminanceThreshold={0.22} luminanceSmoothing={0.3} mipmapBlur radius={0.8} />
+      <Bloom intensity={1.35} luminanceThreshold={0.18} luminanceSmoothing={0.32} mipmapBlur radius={0.88} />
       <primitive object={chroma} />
-      <Vignette offset={0.32} darkness={0.88} />
+      <Vignette offset={0.28} darkness={0.92} />
     </EffectComposer>
   );
 }
@@ -942,6 +1044,23 @@ export default function RaceScene({
       </Environment>
 
       <ArenaBackdrop lowPerf={lowPerf} />
+      {/* a faint tech grid far below the floating circuit — reads as depth,
+          the same monochrome plane language as the hub */}
+      {!lowPerf && (
+        <Grid
+          position={[0, -16, 0]}
+          args={[600, 600]}
+          cellSize={6}
+          cellThickness={0.5}
+          cellColor="#1c1c1c"
+          sectionSize={36}
+          sectionThickness={1}
+          sectionColor="#3a3a3a"
+          fadeDistance={340}
+          fadeStrength={2.5}
+          infiniteGrid
+        />
+      )}
       <TrackRibbon />
       <PulseRunners count={lowPerf ? 6 : 12} />
       <StartArch />

@@ -34,7 +34,7 @@ const COMBO_WINDOW = 3000; // ms to chain a coin and keep the multiplier alive
 export default function HubExperience({ onExit, lowPerf = false }) {
   const [selected, setSelected] = useState(null);
   const [focused, setFocused] = useState(null);
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(() => audio.isMuted());
   const [warping, setWarping] = useState(false);
   const [raceMode, setRaceMode] = useState(false);
   const [touch, setTouch] = useState(false);
@@ -171,6 +171,7 @@ export default function HubExperience({ onExit, lowPerf = false }) {
   }, []);
   const exitRace = useCallback(() => {
     setRaceMode(false);
+    setMuted(audio.isMuted()); // the race has its own mute toggle over the shared audio — re-sync the hub icon
     setWarping(true);
     setTimeout(() => setWarping(false), 700);
   }, []);

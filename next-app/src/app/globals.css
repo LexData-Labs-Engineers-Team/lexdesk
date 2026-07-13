@@ -684,11 +684,16 @@ kbd {
   transition: opacity 0.15s ease; white-space: nowrap;
 }
 .race-flags__slip { color: #fff; text-shadow: 0 0 14px rgba(255, 255, 255, 0.9); }
-.race-flags__off, .race-flags__wrong { color: rgba(255, 255, 255, 0.9); animation: race-pulse 0.7s ease-in-out infinite; }
+.race-flags__off, .race-flags__wrong { color: rgba(255, 255, 255, 0.9); }
 .race-flags[data-slip='1'] .race-flags__slip { opacity: 1; }
-.race-flags[data-off='1'] .race-flags__off { opacity: 1; }
-.race-flags[data-wrong='1'] .race-flags__wrong { opacity: 1; }
-.race-flags[data-wrong='1'] .race-flags__off { opacity: 0; }
+/* pulse ONLY while the flag is active (a bare .race-flags__off animation would
+   override the opacity:0 default and keep the label faintly visible always) */
+.race-flags[data-off='1'] .race-flags__off { opacity: 1; animation: race-pulse 0.7s ease-in-out infinite; }
+.race-flags[data-wrong='1'] .race-flags__wrong { opacity: 1; animation: race-pulse 0.7s ease-in-out infinite; }
+/* priority so the three centered labels never overprint: wrong > off > slip */
+.race-flags[data-off='1'] .race-flags__slip,
+.race-flags[data-wrong='1'] .race-flags__slip { opacity: 0; }
+.race-flags[data-wrong='1'] .race-flags__off { opacity: 0; animation: none; }
 
 /* ---- circuit minimap ---- */
 .race-map {
@@ -868,5 +873,3 @@ kbd {
   .race-timer { display: none; }
   .race-speednum strong { font-size: 1.6rem; }
 }
-
-/* (race v2 chrome ends) */

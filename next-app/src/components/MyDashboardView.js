@@ -87,53 +87,106 @@ function PunctualityDonut({ onTime, late }) {
   );
 }
 
-// Vertical bar chart (no chart dep) that mirrors the calendar exactly: same
-// statuses, same counts (cal.counts), and the same legend colors as
-// MonthCalendar — so the summary is a faithful bar view of the month and stays
-// in sync whenever attendance changes.
-function AttendanceBars({ cal }) {
-  const c = cal.counts;
-  const data = [
-    { label: 'On-time', value: c.ontime, color: '#22C55E' },
-    { label: 'Late', value: c.late, color: '#EAB308' },
-    { label: 'Leave', value: c.leave, color: '#EF4444' },
-    { label: 'Missed', value: c.missed, color: '#BC5A7D' },
-    { label: 'Remote', value: c.remote, color: '#B597FF' },
-  ];
-  const rawMax = Math.max(...data.map((d) => d.value), 1);
-  const niceMax = Math.max(5, Math.ceil(rawMax / 5) * 5);
-  const gridlines = [];
-  for (let v = 0; v <= niceMax; v += 5) gridlines.push(v);
+// Status dot colors — same palette as MonthCalendar / the calendar legend.
+const STATUS_DOT = {
+  ontime: '#22C55E',
+  late: '#EAB308',
+  leave: '#EF4444',
+  missed: '#BC5A7D',
+  holiday: '#5594F8',
+  remote: '#B597FF',
+};
+
+// Summary panel: day-by-day check-in / check-out times for one week of the
+// selected month, with a week filter. Defaults to the week containing today
+// (when viewing the current month), so this week's times are visible at once.
+function WeekInOutTable({ events, cal, ym }) {
+  const canon = useMemo(() => canonicalDays(events), [events]);
+
+  // Weeks of the month as arrays of day-numbers, split on Sundays.
+  const weeks = useMemo(() => {
+    const daysInMonth = new Date(ym.y, ym.m + 1, 0).getDate();
+    const out = [];
+    let cur = [];
+    for (let d = 1; d <= daysInMonth; d++) {
+      if (new Date(ym.y, ym.m, d).getDay() === 0 && cur.length) { out.push(cur); cur = []; }
+      cur.push(d);
+    }
+    if (cur.length) out.push(cur);
+    return out;
+  }, [ym]);
+
+  const now = new Date();
+  const isThisMonth = now.getFullYear() === ym.y && now.getMonth() === ym.m;
+  const defaultWeek = isThisMonth ? Math.max(0, weeks.findIndex((w) => w.includes(now.getDate()))) : 0;
+  // The pick is remembered per month (keyed on ym), so switching months falls
+  // back to that month's default week without a state-resetting effect.
+  const monthKey = `${ym.y}-${ym.m}`;
+  const [picked, setPicked] = useState(null); // { key, week }
+  const week = picked && picked.key === monthKey ? picked.week : defaultWeek;
+
+  const wi = Math.min(week, weeks.length - 1);
+  const mm = String(ym.m + 1).padStart(2, '0');
+  const monthShort = new Date(ym.y, ym.m, 1).toLocaleDateString(undefined, { month: 'short' });
 
   return (
     <div className="flex-1 flex flex-col gap-3">
-      {/* Plot area with horizontal gridlines + value labels on each bar. The
-          left gutter (w-8 label + line) keeps the axis numbers inside the card. */}
-      <div className="relative flex-1 min-h-[160px]">
-        {gridlines.map((v) => (
-          <div key={v} className="absolute left-0 right-0 flex items-center" style={{ bottom: `${(v / niceMax) * 100}%` }}>
-            <span className="w-8 shrink-0 text-[10px] text-[var(--color-text-muted)] text-right pr-2">{v}</span>
-            <span className="flex-1 border-t border-[var(--color-card-border)]" />
-          </div>
-        ))}
-        <div className="absolute inset-0 left-8 flex items-end justify-around gap-2">
-          {data.map((d) => (
-            <div key={d.label} className="flex-1 h-full flex flex-col items-center justify-end" title={`${d.label}: ${d.value}`}>
-              {d.value > 0 && <span className="text-[11px] font-semibold text-[var(--color-text-main)] mb-1">{d.value}</span>}
-              <div
-                className="w-6 rounded-t-md transition-all"
-                style={{ height: `${(d.value / niceMax) * 100}%`, background: d.color, minHeight: d.value > 0 ? 4 : 0 }}
-              />
-            </div>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-[var(--color-text-muted)]">Summary</h3>
+        <select
+          value={wi}
+          onChange={(e) => setPicked({ key: monthKey, week: Number(e.target.value) })}
+          className="bg-[var(--color-bg)] border border-[var(--color-card-border)] rounded-lg px-2 py-1 text-xs text-[var(--color-text-main)] focus:outline-none focus:border-[var(--color-purple)]"
+          aria-label="Select week"
+        >
+          {weeks.map((w, i) => (
+            <option key={i} value={i}>
+              Week {i + 1} · {w[0]}–{w[w.length - 1]} {monthShort}
+            </option>
           ))}
-        </div>
+        </select>
       </div>
-
-      <div className="flex justify-around gap-2 pl-8">
-        {data.map((d) => (
-          <span key={d.label} className="flex-1 text-center text-[10px] text-[var(--color-text-muted)]">{d.label}</span>
-        ))}
-      </div>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-[var(--color-text-muted)] text-xs border-b border-[var(--color-card-border)]">
+            <th className="py-2 pr-2 font-medium">Date</th>
+            <th className="py-2 pr-2 font-medium">Day</th>
+            <th className="py-2 pr-2 font-medium">Check in</th>
+            <th className="py-2 font-medium">Check out</th>
+          </tr>
+        </thead>
+        <tbody>
+          {(weeks[wi] || []).map((d) => {
+            const key = `${ym.y}-${mm}-${String(d).padStart(2, '0')}`;
+            const slot = canon[key];
+            const day = cal.days[d] || {};
+            const isToday = isThisMonth && d === now.getDate();
+            return (
+              <tr key={d} className={`border-t border-[var(--color-card-border)] ${isToday ? 'bg-[var(--color-accent-soft)]' : ''}`}>
+                <td className="py-2 pr-2 whitespace-nowrap">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span
+                      className="inline-block w-2 h-2 rounded-full shrink-0"
+                      style={{ background: STATUS_DOT[day.status] || 'var(--color-card-border)' }}
+                      title={day.name || day.subject || day.status || ''}
+                    />
+                    <span className="text-[var(--color-text-main)] font-medium">{d} {monthShort}</span>
+                  </span>
+                </td>
+                <td className="py-2 pr-2 text-[var(--color-text-muted)]">
+                  {new Date(ym.y, ym.m, d).toLocaleDateString(undefined, { weekday: 'short' })}
+                </td>
+                <td className="py-2 pr-2 text-[var(--color-green)] font-semibold whitespace-nowrap">
+                  {slot?.firstCheckIn ? timeFmt(slot.firstCheckIn.ts) : '—'}
+                </td>
+                <td className="py-2 text-[var(--color-red)] font-semibold whitespace-nowrap">
+                  {slot?.lastCheckOut ? timeFmt(slot.lastCheckOut.ts) : '—'}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
@@ -289,9 +342,8 @@ export default function MyDashboardPage() {
             <div className="rounded-xl border border-[var(--color-card-border)] p-4">
               <MonthCalendar cal={cal} loading={loading} compact bare />
             </div>
-            <div className="rounded-xl border border-[var(--color-card-border)] p-4 flex flex-col gap-5">
-              <h3 className="text-sm font-semibold text-[var(--color-text-muted)]">Summary</h3>
-              <AttendanceBars cal={cal} />
+            <div className="rounded-xl border border-[var(--color-card-border)] p-4 flex flex-col">
+              <WeekInOutTable events={events} cal={cal} ym={ym} />
             </div>
           </div>
         </div>

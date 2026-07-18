@@ -25,7 +25,10 @@ export async function POST(request) {
   }
 
   try {
-    const outcome = await processCheckIn(user.uid, user.orgId, user.email, { ...body, clientMode: 'mobile' });
+    // Strip any client-supplied clientIp: the office-IP check is web-only and
+    // its IP is server-derived, so a mobile body must never activate or feed it.
+    const { clientIp: _ignoredClientIp, ...safeBody } = body;
+    const outcome = await processCheckIn(user.uid, user.orgId, user.email, { ...safeBody, clientMode: 'mobile' });
     return NextResponse.json(outcome, { status: outcome.ok ? 200 : 422 });
   } catch (e) {
     return NextResponse.json({ error: e.message, upstream: e.body ?? null }, { status: e.status || 500 });

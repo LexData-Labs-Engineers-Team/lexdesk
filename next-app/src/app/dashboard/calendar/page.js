@@ -5,6 +5,7 @@ import PageHeader from '@/components/PageHeader';
 import MonthCalendar from '@/components/MonthCalendar';
 import { useAttendData } from '@/lib/useAttendData';
 import { employeeCalendarMonth, eventsForUser, onlyEmployees } from '@/lib/attend';
+import { apiFetch } from '@/lib/apiFetch';
 
 const MONTH_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
@@ -23,7 +24,7 @@ export default function CalendarPage() {
 
   useEffect(() => {
     const token = localStorage.getItem('token');
-    fetch('/api/holidays', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+    apiFetch('/api/holidays', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { holidays: [] }))
       .then((j) => setHolidays(j.holidays || []))
       .catch(() => setHolidays([]));

@@ -13,18 +13,18 @@ android {
         applicationId = "com.attenddesk"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 12
+        versionName = "0.3.0"
 
-        // Backend = LexDesk. Override at build time for emulator local dev:
+        // Backend = TeamOS. Override at build time for emulator local dev:
         //   -PattendDeskApiBase=http://10.0.2.2:3000/api/v1
         val apiBase = (project.findProperty("attendDeskApiBase") as String?)
-            ?: "https://lexdesk-dhaka.vercel.app/api/v1"
+            ?: "https://teamos.lexdatalabs.com/api/v1"
         buildConfigField("String", "API_BASE", "\"$apiBase\"")
 
         // Admin web dashboard URL — surfaced to admins who sign in to the app.
         val adminWebUrl = (project.findProperty("adminWebUrl") as String?)
-            ?: "https://lexdesk-dhaka.vercel.app"
+            ?: "https://teamos.lexdatalabs.com"
         buildConfigField("String", "ADMIN_WEB_URL", "\"$adminWebUrl\"")
     }
 

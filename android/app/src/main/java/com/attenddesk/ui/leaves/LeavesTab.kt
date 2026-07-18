@@ -370,8 +370,8 @@ private fun LeaveStatusChip(status: String) {
 }
 
 private fun formatRange(fromDay: String, toDay: String): String {
-    val from = LocalDate.parse(fromDay).format(DISPLAY_DAY)
+    val from = runCatching { LocalDate.parse(fromDay).format(DISPLAY_DAY) }.getOrDefault(fromDay)
     if (fromDay == toDay) return from
-    val to = LocalDate.parse(toDay).format(DISPLAY_DAY)
+    val to = runCatching { LocalDate.parse(toDay).format(DISPLAY_DAY) }.getOrDefault(toDay)
     return "$from – $to"
 }

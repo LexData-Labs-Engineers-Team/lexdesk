@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import PageHeader from '@/components/PageHeader';
 import KpiCard from '@/components/KpiCard';
+import { apiFetch } from '@/lib/apiFetch';
 
 const STATUS_BADGE = {
   pending: 'bg-[rgba(234,179,8,0.15)] text-[var(--color-yellow)]',
@@ -37,7 +38,7 @@ export default function MyReconPage() {
     setError('');
     try {
       const token = localStorage.getItem('token');
-      const res = await fetch('/api/me/recon', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+      const res = await apiFetch('/api/me/recon', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setRows(json.requests || []);

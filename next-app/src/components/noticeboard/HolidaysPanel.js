@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import PageHeader from '@/components/PageHeader';
+import { apiFetch } from '@/lib/apiFetch';
 
 function fmtDay(d) {
   if (!d) return '';
@@ -35,7 +36,7 @@ export default function HolidaysPanel() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch('/api/holidays', { headers: authHeader(), cache: 'no-store' });
+      const res = await apiFetch('/api/holidays', { headers: authHeader(), cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setHolidays(json.holidays || []);

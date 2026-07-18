@@ -1,60 +1,48 @@
-import { firebaseAdmin, FieldValue } from '../firebase';
-import { Paths } from '../paths';
+import { sql } from '../db';
+import { tsToIso } from '../rows';
 
 // Notice board — admins author announcements; everyone reads. No approval.
 
-function toIso(v) {
-  if (v && typeof v.toDate === 'function') return v.toDate().toISOString();
-  return typeof v === 'string' ? v : null;
-}
-
-function rowFromDoc(doc) {
-  const d = doc.data() ?? {};
+function rowFrom(r) {
   return {
-    id: doc.id,
-    title: d.title ?? '',
-    body: d.body ?? '',
-    pinned: !!d.pinned,
-    createdAt: toIso(d.createdAt),
-    createdBy: d.createdBy ?? null,
+    id: r.id,
+    title: r.title ?? '',
+    body: r.body ?? '',
+    pinned: !!r.pinned,
+    createdAt: tsToIso(r.created_at),
+    createdBy: r.created_by ?? null,
   };
 }
 
-// Pinned first, then newest. Sorted client-side to avoid a composite index.
+// Pinned first, then newest.
 export async function listNotices(orgId, limit = 50) {
-  const { db } = firebaseAdmin();
-  const snap = await db.collection(Paths.notices(orgId)).get();
   const n = Math.min(Math.max(Number(limit) || 50, 1), 200);
-  const notices = snap.docs
-    .map(rowFromDoc)
-    .sort((a, b) => {
-      if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-      return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
-    })
-    .slice(0, n);
-  return { notices };
+  const rows = await sql`
+    SELECT * FROM notices
+    WHERE org_id = ${orgId}
+    ORDER BY pinned DESC, created_at DESC
+    LIMIT ${n}
+  `;
+  return { notices: rows.map(rowFrom) };
 }
 
 // body: { title, body?, pinned? }
 export async function createNotice(body, orgId, authorUid) {
   const title = String(body?.title ?? '').trim();
   if (!title) throw Object.assign(new Error('title_required'), { status: 400 });
-  const { db } = firebaseAdmin();
-  const ref = await db.collection(Paths.notices(orgId)).add({
-    title,
-    body: String(body?.body ?? '').trim(),
-    pinned: !!body?.pinned,
-    createdAt: FieldValue.serverTimestamp(),
-    createdBy: authorUid ?? 'lexdesk',
-  });
-  return { id: ref.id };
+  const rows = await sql`
+    INSERT INTO notices (org_id, title, body, pinned, created_at, created_by)
+    VALUES (${orgId}, ${title}, ${String(body?.body ?? '').trim()}, ${!!body?.pinned}, now(), ${authorUid ?? 'lexdesk'})
+    RETURNING id
+  `;
+  return { id: rows[0].id };
 }
 
 export async function deleteNotice(id, orgId) {
-  const { db } = firebaseAdmin();
-  const ref = db.doc(Paths.notice(orgId, id));
-  const snap = await ref.get();
-  if (!snap.exists) throw Object.assign(new Error('not_found'), { status: 404 });
-  await ref.delete();
+  const rows = await sql`
+    DELETE FROM notices WHERE id = ${id} AND org_id = ${orgId}
+    RETURNING id
+  `;
+  if (rows.length === 0) throw Object.assign(new Error('not_found'), { status: 404 });
   return { ok: true };
 }

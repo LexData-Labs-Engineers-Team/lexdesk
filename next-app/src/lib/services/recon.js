@@ -1,4 +1,4 @@
-import { Paths } from '../paths';
+import { sql } from '../db';
 import { createRequestService, ISO_DAY_RE } from './requestKit';
 import { addManualAttendance } from './attendance';
 
@@ -13,12 +13,11 @@ function dhakaIso(s) {
 }
 
 const svc = createRequestService({
-  collection: (orgId) => Paths.reconRequests(orgId),
-  doc: (orgId, id) => Paths.reconRequest(orgId, id),
+  table: 'recon_requests',
   pick: (d) => ({
     day: d.day ?? '',
-    proposedInIso: d.proposedInIso ?? null,
-    proposedOutIso: d.proposedOutIso ?? null,
+    proposedInIso: d.proposed_in_iso ?? null,
+    proposedOutIso: d.proposed_out_iso ?? null,
     reason: d.reason ?? '',
   }),
   build: (b) => {
@@ -55,3 +54,11 @@ export async function decideRecon(id, decision, note, orgId, deciderUid) {
   return result;
 }
 export const getRecon = (orgId, id) => svc.getOne(orgId, id);
+
+// System-admin cleanup: permanently delete a reconciliation record. Log only —
+// any manual attendance the approval already wrote is intentionally left intact.
+export async function deleteRecon(orgId, id) {
+  const rows = await sql`DELETE FROM recon_requests WHERE id=${id} AND org_id=${orgId} RETURNING id`;
+  if (!rows.length) throw Object.assign(new Error('not_found'), { status: 404 });
+  return { ok: true };
+}

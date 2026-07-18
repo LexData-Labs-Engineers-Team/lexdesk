@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
- * Glossy black "LD" badge — the LexDesk header logo.
+ * Glossy black "TO" badge — the TeamOS header logo.
  */
 @Composable
 fun BrandMark(
@@ -32,7 +32,7 @@ fun BrandMark(
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = "LD",
+            text = "TO",
             color = Color.White,
             fontWeight = FontWeight.Bold,
             style = MaterialTheme.typography.labelLarge,

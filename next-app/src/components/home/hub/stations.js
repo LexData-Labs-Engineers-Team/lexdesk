@@ -23,10 +23,11 @@ const approachFrom = (deg) => {
 
 const DEFS = [
   { id: 'signin', label: 'Enter', sub: 'Sign in', deg: 0 },
-  { id: 'join', label: 'Join', sub: 'Request access', deg: 72 },
-  { id: 'features', label: 'Explore', sub: 'What it does', deg: 144 },
-  { id: 'pulse', label: 'Pulse', sub: 'See it live', deg: 216 },
-  { id: 'app', label: 'Mobile', sub: 'Get the app', deg: 288 },
+  { id: 'join', label: 'Join', sub: 'Request access', deg: 60 },
+  { id: 'features', label: 'Explore', sub: 'What it does', deg: 120 },
+  { id: 'pulse', label: 'Pulse', sub: 'See it live', deg: 180 },
+  { id: 'app', label: 'Mobile', sub: 'Get the app', deg: 240 },
+  { id: 'race', label: 'Race', sub: 'Grand Prix', deg: 300 },
 ];
 
 export const WORLD_RADIUS = RING + 20; // soft boundary the ship can roam to

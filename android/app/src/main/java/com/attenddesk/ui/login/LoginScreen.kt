@@ -120,6 +120,8 @@ fun LoginScreen(
                     is com.google.firebase.auth.FirebaseAuthInvalidUserException,
                     is com.google.firebase.auth.FirebaseAuthInvalidCredentialsException ->
                         "Wrong email or password."
+                    is com.attenddesk.data.LoginBlockedException ->
+                        e.message ?: "Sign-in isn't allowed on this device."
                     is java.net.UnknownHostException,
                     is java.net.SocketTimeoutException,
                     is java.io.IOException ->

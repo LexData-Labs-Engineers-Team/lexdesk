@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/auth';
 import { createEmployee, getEmployees } from '@/lib/backend';
-import { firebaseAdmin, FieldValue } from '@/lib/firebase';
-import { Paths } from '@/lib/paths';
+import { sql } from '@/lib/db';
 import { ORG_ID } from '@/lib/config';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +13,7 @@ export const dynamic = 'force-dynamic';
 //    (the env system admin or a seeded SUPER_ADMIN) — keeps an org admin from
 //    creating more admins.
 const isSuper = (user) => user.role === 'superadmin';
-const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin';
+const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin' || user.role === 'dev';
 
 export async function GET(request) {
   const user = getUserFromRequest(request);
@@ -22,12 +21,11 @@ export async function GET(request) {
   if (!isAdmin(user)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
   try {
-    const { db } = firebaseAdmin();
-    const orgSnap = await db.doc(Paths.org(ORG_ID)).get();
+    const rows = await sql`SELECT name FROM org WHERE id = ${ORG_ID}`;
     const { employees } = await getEmployees(ORG_ID);
     const admins = (employees || []).filter((e) => String(e.role || '').toUpperCase() === 'ADMIN');
     return NextResponse.json({
-      org: { id: ORG_ID, name: orgSnap.exists ? orgSnap.data().name || '' : '' },
+      org: { id: ORG_ID, name: rows.length ? rows[0].name || '' : '' },
       admins,
     });
   } catch (err) {
@@ -51,11 +49,12 @@ export async function PATCH(request) {
   if (!companyName) return NextResponse.json({ error: 'Company name is required' }, { status: 400 });
 
   try {
-    const { db } = firebaseAdmin();
-    await db.doc(Paths.org(ORG_ID)).set(
-      { name: companyName, source: 'lexdesk', updatedAt: FieldValue.serverTimestamp() },
-      { merge: true },
-    );
+    await sql`
+      INSERT INTO org (id, name, source, updated_at)
+      VALUES (${ORG_ID}, ${companyName}, ${'lexdesk'}, now())
+      ON CONFLICT (id) DO UPDATE
+        SET name = EXCLUDED.name, source = EXCLUDED.source, updated_at = now()
+    `;
     return NextResponse.json({ ok: true, org: { id: ORG_ID, name: companyName } });
   } catch (err) {
     return NextResponse.json({ error: err.message, upstream: err.body ?? null }, { status: err.status || 502 });
@@ -84,13 +83,14 @@ export async function POST(request) {
   }
 
   try {
-    const { db } = firebaseAdmin();
     // Optionally set/refresh the company name in the same step.
     if (companyName) {
-      await db.doc(Paths.org(ORG_ID)).set(
-        { name: companyName, source: 'lexdesk', updatedAt: FieldValue.serverTimestamp() },
-        { merge: true },
-      );
+      await sql`
+        INSERT INTO org (id, name, source, updated_at)
+        VALUES (${ORG_ID}, ${companyName}, ${'lexdesk'}, now())
+        ON CONFLICT (id) DO UPDATE
+          SET name = EXCLUDED.name, source = EXCLUDED.source, updated_at = now()
+      `;
     }
     // Create the org admin (temp password returned to hand over).
     const result = await createEmployee({ email: adminEmail, name: adminName, role: 'ADMIN' }, ORG_ID);

@@ -6,6 +6,7 @@ import MonthNav from '@/components/MonthNav';
 import KpiCard from '@/components/KpiCard';
 import Avatar from '@/components/Avatar';
 import MemberCard from '@/components/people/MemberCard';
+import { apiFetch } from '@/lib/apiFetch';
 import {
   perEmployeeStats,
   employeeCalendarMonth,
@@ -111,7 +112,7 @@ export default function TeamAttendancePage() {
       from.setUTCDate(from.getUTCDate() - 1);
       const to = new Date(Date.UTC(ym.y, ym.m + 1, 1));
       to.setUTCDate(to.getUTCDate() + 1);
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/team/attendance?limit=1000&from=${encodeURIComponent(from.toISOString())}&to=${encodeURIComponent(to.toISOString())}`,
         { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' },
       );
@@ -136,8 +137,8 @@ export default function TeamAttendancePage() {
     const token = localStorage.getItem('token');
     const headers = { Authorization: `Bearer ${token}` };
     Promise.all([
-      fetch('/api/team/leave?status=approved', { headers, cache: 'no-store' }).then((r) => (r.ok ? r.json() : { requests: [] })),
-      fetch('/api/holidays', { headers, cache: 'no-store' }).then((r) => (r.ok ? r.json() : { holidays: [] })),
+      apiFetch('/api/team/leave?status=approved', { headers, cache: 'no-store' }).then((r) => (r.ok ? r.json() : { requests: [] })),
+      apiFetch('/api/holidays', { headers, cache: 'no-store' }).then((r) => (r.ok ? r.json() : { holidays: [] })),
     ])
       .then(([l, h]) => { setLeave(l.requests || []); setHolidays(h.holidays || []); })
       .catch(() => {});

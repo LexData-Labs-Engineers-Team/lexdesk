@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import PageHeader from '@/components/PageHeader';
+import { apiFetch } from '@/lib/apiFetch';
 
 const STATUS_FILTERS = ['pending', 'approved', 'rejected', 'all'];
 const STATUS_STYLE = {
@@ -48,7 +49,7 @@ export default function TeamApprovalsPage() {
     try {
       const token = localStorage.getItem('token');
       const qs = status === 'all' ? '' : `?status=${status}`;
-      const res = await fetch(`/api/team/${mode}${qs}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+      const res = await apiFetch(`/api/team/${mode}${qs}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setRequests(json.requests || []);

@@ -22,7 +22,7 @@ export function initialsFromName(name) {
 // AttendDesk stores roles uppercase (its data); the LexDesk frontend uses
 // lowercase. SUPER_ADMIN maps to 'superadmin'.
 export function roleToLexdesk(role) {
-  const map = { ADMIN: 'admin', EMPLOYEE: 'employee', SUPER_ADMIN: 'superadmin', IT_TEAM: 'it_team' };
+  const map = { ADMIN: 'admin', EMPLOYEE: 'employee', SUPER_ADMIN: 'superadmin', IT_TEAM: 'it_team', DEV: 'dev' };
   return map[String(role || '').toUpperCase()] || 'employee';
 }
 

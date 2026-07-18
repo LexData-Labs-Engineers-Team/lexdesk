@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getMobileUser, mobileAuthError } from '@/lib/mobileAuth';
 import { getAssetRequests, createAssetRequest } from '@/lib/services/assets';
-import { firebaseAdmin } from '@/lib/firebase';
-import { Paths } from '@/lib/paths';
+import { sql } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,12 +25,11 @@ export async function POST(request) {
   }
   try {
     let requiresLead = false;
-    const { db } = firebaseAdmin();
-    const uSnap = await db.doc(Paths.user(user.orgId, user.uid)).get();
-    const teamId = uSnap.exists ? uSnap.data()?.teamId : null;
+    const uRows = await sql`SELECT team_id FROM users WHERE firebase_uid = ${user.uid} AND org_id = ${user.orgId} LIMIT 1`;
+    const teamId = uRows[0]?.team_id || null;
     if (teamId) {
-      const tSnap = await db.doc(Paths.team(user.orgId, teamId)).get();
-      const leaderUid = tSnap.exists ? tSnap.data()?.leaderUid : null;
+      const tRows = await sql`SELECT leader_uid FROM teams WHERE id = ${teamId} AND org_id = ${user.orgId} LIMIT 1`;
+      const leaderUid = tRows[0]?.leader_uid || null;
       if (leaderUid && String(leaderUid) !== String(user.uid)) requiresLead = true;
     }
     const result = await createAssetRequest({ ...body, userId: user.uid, requiresLead }, user.orgId);

@@ -5,6 +5,7 @@ import MonthNav from '@/components/MonthNav';
 import MonthCalendar from '@/components/MonthCalendar';
 import CheckInCard from '@/components/CheckInCard';
 import { employeeCalendarMonth, bdDateKey, approvedLeaveDays, canonicalDays } from '@/lib/attend';
+import { apiFetch } from '@/lib/apiFetch';
 
 function timeFmt(ms) {
   try {
@@ -164,11 +165,11 @@ export default function MyDashboardPage() {
       const token = localStorage.getItem('token');
       const headers = { Authorization: `Bearer ${token}` };
       const [aRes, lRes, hRes, asRes, rRes] = await Promise.all([
-        fetch('/api/me/attendance?limit=1000', { headers, cache: 'no-store' }),
-        fetch('/api/me/leave', { headers, cache: 'no-store' }),
-        fetch('/api/holidays', { headers, cache: 'no-store' }),
-        fetch('/api/me/asset', { headers, cache: 'no-store' }),
-        fetch('/api/me/remote', { headers, cache: 'no-store' }),
+        apiFetch('/api/me/attendance?limit=1000', { headers, cache: 'no-store' }),
+        apiFetch('/api/me/leave', { headers, cache: 'no-store' }),
+        apiFetch('/api/holidays', { headers, cache: 'no-store' }),
+        apiFetch('/api/me/asset', { headers, cache: 'no-store' }),
+        apiFetch('/api/me/remote', { headers, cache: 'no-store' }),
       ]);
       const aJson = await aRes.json();
       if (!aRes.ok) throw new Error(aJson.error || `HTTP ${aRes.status}`);

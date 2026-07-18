@@ -78,7 +78,8 @@ fun ApprovalsScreen(container: AppContainer, onBack: () -> Unit, initialTab: Int
                     ApprovalItem(r.id, "${r.userName.ifBlank { r.userEmail }} · ${r.day}", r.reason) { d, n -> api.decideRecon(r.id, DecisionRequest(d, n)) }
                 }
                 else -> api.manageRemote().requests.map { r ->
-                    ApprovalItem(r.id, "${r.userName.ifBlank { r.userEmail }} · ${r.day}", r.reason) { d, n -> api.decideRemote(r.id, DecisionRequest(d, n)) }
+                    val hrs = r.durationMinutes?.let { val h = it / 60; val m = it % 60; if (h > 0) "${h}h ${m}m" else "${m}m" }
+                    ApprovalItem(r.id, "${r.userName.ifBlank { r.userEmail }} · ${r.day}", listOfNotNull(hrs, r.reason.ifBlank { null }).joinToString(" · ")) { d, n -> api.decideRemote(r.id, DecisionRequest(d, n)) }
                 }
             }
         }

@@ -5,8 +5,15 @@ import com.attenddesk.data.api.MeResponse
 import com.attenddesk.data.api.SetPasswordRequest
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.tasks.await
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import retrofit2.HttpException
 
 data class LoginResult(val me: MeResponse)
+
+/** Sign-in blocked by the server's device cap / login IP allowlist. */
+class LoginBlockedException(val code: String, message: String) : Exception(message)
 
 class AuthRepository(
     private val api: AttendApi,
@@ -28,8 +35,28 @@ class AuthRepository(
             // auto-logs-in on relaunch (with no profile cached).
             android.util.Log.w("AuthRepository", "Post-signIn step failed; signing out", t)
             runCatching { firebaseAuth.signOut() }
-            throw t
+            throw mapLoginError(t)
         }
+    }
+
+    // Turn a device-cap / IP-allowlist 403 from the first authenticated call into a
+    // user-facing LoginBlockedException; pass anything else through unchanged.
+    private fun mapLoginError(t: Throwable): Throwable {
+        if (t !is HttpException) return t
+        val code = runCatching {
+            t.response()?.errorBody()?.string()?.let {
+                Json { ignoreUnknownKeys = true }.parseToJsonElement(it)
+                    .jsonObject["error"]?.jsonPrimitive?.content
+            }
+        }.getOrNull() ?: return t
+        val message = when (code) {
+            "device_limit_reached" ->
+                "You're already signed in on 2 devices. Ask your admin to reset your devices."
+            "login_ip_not_allowed" -> "You can't sign in from this network. Contact your admin."
+            "device_id_required" -> "This device couldn't be identified. Please update the app."
+            else -> return t
+        }
+        return LoginBlockedException(code, message)
     }
 
     suspend fun setPassword(new: String) {

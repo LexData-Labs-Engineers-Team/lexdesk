@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { apiFetch } from '@/lib/apiFetch';
 
 const STATUS_FILTERS = ['pending', 'approved', 'rejected', 'all'];
 const SUB = {
@@ -28,7 +29,7 @@ export default function AssetApprovalsPanel({ readOnly = false } = {}) {
     try {
       const token = localStorage.getItem('token');
       const qs = status === 'all' ? '' : `?status=${status}`;
-      const res = await fetch(`/api/admin/asset${qs}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
+      const res = await apiFetch(`/api/admin/asset${qs}`, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
       setRequests(json.requests || []);

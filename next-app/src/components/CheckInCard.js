@@ -23,19 +23,16 @@ const REASON_TEXT = {
   liveness_failed: 'Face liveness check failed — try again',
   similarity_below_threshold: "Face didn't match — try again with better lighting",
   bad_embedding_dim: 'Face data mismatch — re-enroll required',
+  ip_not_in_allowlist: 'Not on the office network — check in from the office',
+  office_ip_not_configured: 'Office IP allowlist is empty — ask your admin to set it',
+  missing_ip: 'Could not determine your network IP',
 };
 
 // Captured face embeddings are valid this long before re-verification
 // (mirrors the Android app's 60 s freshness window).
 const FACE_TTL_MS = 60_000;
 
-const CHECK_LABEL = { wifi: 'Wi-Fi', geo: 'Location', qr: 'QR code', face: 'Face' };
-
-const GEO_ERROR = {
-  1: 'Location permission denied — allow location for this site in your browser settings, then retry.',
-  2: "Location unavailable — your device couldn't get a GPS fix.",
-  3: 'Timed out getting your location — try again near a window, or from a phone.',
-};
+const CHECK_LABEL = { wifi: 'Wi-Fi', geo: 'Location', qr: 'QR code', face: 'Face', ip: 'Office network' };
 
 function distanceMeters(lat1, lng1, lat2, lng2) {
   const R = 6371000;
@@ -141,18 +138,18 @@ export default function CheckInCard({ onSuccess, todayIn, todayOut, bare = false
       setModal('verify');
       return;
     }
-    if (!('geolocation' in navigator) || window.isSecureContext === false) {
-      setError('Location needs a secure connection — open this page over https:// (or localhost).');
-      return;
-    }
     setPhase('locating');
-    let coords;
-    try {
-      coords = (await getPosition()).coords;
-    } catch (e) {
-      setError(GEO_ERROR[e?.code] || 'Could not get your location.');
-      setPhase('idle');
-      return;
+    // GPS is best-effort: if the browser can't get a fix (permission denied,
+    // unavailable, insecure context), we still submit and let the office-IP
+    // check carry the location requirement server-side. If both the geofence
+    // and the office-IP fail, the server reports it per-check below.
+    let coords = null;
+    if ('geolocation' in navigator && window.isSecureContext !== false) {
+      try {
+        coords = (await getPosition()).coords;
+      } catch {
+        coords = null;
+      }
     }
     setPhase('submitting');
     try {
@@ -162,9 +159,7 @@ export default function CheckInCard({ onSuccess, todayIn, todayOut, bare = false
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           type,
-          lat: coords.latitude,
-          lng: coords.longitude,
-          accuracyMeters: coords.accuracy,
+          ...(coords ? { lat: coords.latitude, lng: coords.longitude, accuracyMeters: coords.accuracy } : {}),
           ...(faceB64 ? { faceEmbeddingB64: faceB64 } : {}),
         }),
       });
@@ -178,7 +173,7 @@ export default function CheckInCard({ onSuccess, todayIn, todayOut, bare = false
         return;
       }
       const dist =
-        info?.office?.lat != null && info?.office?.lng != null
+        coords && info?.office?.lat != null && info?.office?.lng != null
           ? distanceMeters(coords.latitude, coords.longitude, info.office.lat, info.office.lng)
           : null;
       setResult({ ...json, type, dist });

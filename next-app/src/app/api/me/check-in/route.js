@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/auth';
 import { checkIn } from '@/lib/backend';
+import { clientIpFromHeaders } from '@/lib/ip';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,18 +36,35 @@ export async function POST(request) {
     return NextResponse.json({ error: 'type must be CHECK_IN or CHECK_OUT' }, { status: 400 });
   }
 
-  const lat = Number(body?.lat);
-  const lng = Number(body?.lng);
-  const accuracyMeters = Number(body?.accuracyMeters);
-  if (
-    !Number.isFinite(lat) || lat < -90 || lat > 90 ||
-    !Number.isFinite(lng) || lng < -180 || lng > 180 ||
-    !Number.isFinite(accuracyMeters) || accuracyMeters < 0
-  ) {
-    return NextResponse.json({ error: 'lat, lng and accuracyMeters are required' }, { status: 400 });
+  const payload = { userId: String(user.id), type };
+  // GPS is optional: with the office-IP check, a valid office IP can satisfy the
+  // location requirement on its own (desktop browsers often can't get an
+  // accurate fix, or the user denies location). Coords, when sent, must be valid;
+  // when absent, the geo check yields 'missing_location' and IP can carry it.
+  const hasGps = body?.lat != null || body?.lng != null || body?.accuracyMeters != null;
+  if (hasGps) {
+    const lat = Number(body?.lat);
+    const lng = Number(body?.lng);
+    const accuracyMeters = Number(body?.accuracyMeters);
+    if (
+      !Number.isFinite(lat) || lat < -90 || lat > 90 ||
+      !Number.isFinite(lng) || lng < -180 || lng > 180 ||
+      !Number.isFinite(accuracyMeters) || accuracyMeters < 0
+    ) {
+      return NextResponse.json({ error: 'lat, lng and accuracyMeters must be valid when provided' }, { status: 400 });
+    }
+    payload.lat = lat;
+    payload.lng = lng;
+    payload.accuracyMeters = accuracyMeters;
   }
-
-  const payload = { userId: String(user.id), type, lat, lng, accuracyMeters };
+  // Server-derived office-IP signal for the web 'ip' check (mobile never sends
+  // this, so the IP check is web-only). Whitelisted here, never read from body.
+  payload.clientIp = clientIpFromHeaders(request.headers) || '';
+  // Device-adaptive web location: mobile browsers (which have GPS) must also pass
+  // the geofence; desktop browsers rely on office-IP. Derived from the User-Agent
+  // server-side (whitelisted, never read from the body).
+  const ua = request.headers.get('user-agent') || '';
+  payload.webDevice = /Mobi|Android|iPhone|iPad|iPod|Windows Phone/i.test(ua) ? 'mobile' : 'desktop';
   const face = body?.faceEmbeddingB64;
   if (face != null) {
     const validFace =

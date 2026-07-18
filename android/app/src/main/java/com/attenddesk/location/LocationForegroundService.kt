@@ -123,7 +123,7 @@ class LocationForegroundService : Service() {
         this, LocationNotifications.CHANNEL_CONTINUOUS,
     )
         .setSmallIcon(R.mipmap.ic_launcher)
-        .setContentTitle("AttendDesk · location")
+        .setContentTitle("TeamOS · location")
         .setContentText("Background tracking is on.")
         .setOngoing(true)
         .setPriority(NotificationCompat.PRIORITY_MIN)

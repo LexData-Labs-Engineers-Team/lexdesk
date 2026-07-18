@@ -61,6 +61,7 @@ interface AttendApi {
     // Remote attendance
     @GET("me/remote") suspend fun listMyRemote(): RemoteListResponse
     @POST("me/remote") suspend fun submitRemote(@Body body: RemoteSubmitRequest): IdResponse
+    @POST("me/remote/{id}") suspend fun doneRemote(@Path("id") id: String)
     @DELETE("me/remote/{id}") suspend fun cancelRemote(@Path("id") id: String)
 
     // Assets
@@ -75,6 +76,9 @@ interface AttendApi {
     @GET("directory") suspend fun directory(): DirectoryResponse
     @GET("notices") suspend fun notices(): NoticeListResponse
     @GET("me/team-summary") suspend fun teamSummary(): TeamSummaryResponse
+
+    // All-employees attendance roster (today in/out + 7-day counts). Any signed-in user.
+    @GET("attendance") suspend fun viewAttendance(): TeamSummaryResponse
 
     // Manager approval queues
     @GET("manage/leave") suspend fun manageLeave(@Query("status") status: String? = "pending"): LeaveManageResponse

@@ -13,7 +13,7 @@ function initialView() {
   if (typeof window === 'undefined') return 'grid';
   let role = null;
   try { role = JSON.parse(localStorage.getItem('user') || 'null')?.role ?? null; } catch { role = null; }
-  const isAdmin = role === 'admin' || role === 'superadmin';
+  const isAdmin = role === 'admin' || role === 'superadmin' || role === 'dev';
   const tab = new URLSearchParams(window.location.search).get('tab');
   return tab === 'teams' && isAdmin ? 'management' : 'grid';
 }

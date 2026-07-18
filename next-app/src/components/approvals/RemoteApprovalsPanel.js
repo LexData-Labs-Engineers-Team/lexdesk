@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { apiFetch } from '@/lib/apiFetch';
 
 const STATUS_FILTERS = ['pending', 'approved', 'rejected', 'cancelled', 'all'];
 const STATUS_STYLE = {
@@ -19,6 +20,18 @@ function fmtLocation(r) {
   return '—';
 }
 
+function fmtDur(mins) {
+  if (typeof mins !== 'number' || mins <= 0) return '—';
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return h ? `${h}h ${m}m` : `${m}m`;
+}
+function fmtClock(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 export default function RemoteApprovalsPanel() {
   const [requests, setRequests] = useState(null);
   const [status, setStatus] = useState('pending');
@@ -33,7 +46,7 @@ export default function RemoteApprovalsPanel() {
     try {
       const token = localStorage.getItem('token');
       const qs = status === 'all' ? '' : `?status=${status}`;
-      const res = await fetch(`/api/admin/remote${qs}`, {
+      const res = await apiFetch(`/api/admin/remote${qs}`, {
         headers: { Authorization: `Bearer ${token}` },
         cache: 'no-store',
       });
@@ -99,6 +112,34 @@ export default function RemoteApprovalsPanel() {
         <button onClick={load} className="btn-outline py-1.5 px-3 text-xs ml-auto">Refresh</button>
       </div>
 
+      {(() => {
+        const approved = list.filter((r) => r.status === 'approved' && typeof r.durationMinutes === 'number');
+        if (approved.length === 0) return null;
+        const byUser = new Map();
+        for (const r of approved) {
+          const key = r.userName || r.userEmail || r.uid;
+          byUser.set(key, (byUser.get(key) || 0) + r.durationMinutes);
+        }
+        const rows = [...byUser.entries()].sort((a, b) => b[1] - a[1]);
+        const grand = approved.reduce((s, r) => s + r.durationMinutes, 0);
+        return (
+          <div className="card">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-semibold text-sm text-[var(--color-text-main)]">Approved remote hours</h3>
+              <span className="text-xs text-[var(--color-text-muted)]">Total {fmtDur(grand)}</span>
+            </div>
+            <div className="flex flex-col gap-1">
+              {rows.map(([name, mins]) => (
+                <div key={name} className="flex justify-between text-sm">
+                  <span className="text-[var(--color-text-main)]">{name}</span>
+                  <span className="text-[var(--color-text-muted)]">{fmtDur(mins)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
       <div className="card overflow-hidden p-0">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -106,6 +147,7 @@ export default function RemoteApprovalsPanel() {
               <tr className="text-left text-[var(--color-text-muted)] text-xs border-b border-[var(--color-card-border)]">
                 <th className="py-3 px-4 font-medium">Employee</th>
                 <th className="py-3 px-4 font-medium">Day</th>
+                <th className="py-3 px-4 font-medium">Hours</th>
                 <th className="py-3 px-4 font-medium">Reason</th>
                 <th className="py-3 px-4 font-medium">Location</th>
                 <th className="py-3 px-4 font-medium">Status</th>
@@ -120,6 +162,18 @@ export default function RemoteApprovalsPanel() {
                     <div className="text-xs text-[var(--color-text-muted)]">{r.userEmail}</div>
                   </td>
                   <td className="py-3 px-4 text-[var(--color-text-main)] whitespace-nowrap">{r.day || '—'}</td>
+                  <td className="py-3 px-4 whitespace-nowrap">
+                    {r.status === 'working' ? (
+                      <span className="text-[var(--color-yellow)]">Working…</span>
+                    ) : r.durationMinutes != null ? (
+                      <>
+                        <div className="text-[var(--color-text-main)]">{fmtDur(r.durationMinutes)}</div>
+                        {(fmtClock(r.startedAt) || fmtClock(r.endedAt)) && (
+                          <div className="text-xs text-[var(--color-text-muted)]">{fmtClock(r.startedAt) || '—'}–{fmtClock(r.endedAt) || '…'}</div>
+                        )}
+                      </>
+                    ) : '—'}
+                  </td>
                   <td className="py-3 px-4">
                     <div className="text-[var(--color-text-main)] max-w-[260px]">{r.reason || '—'}</div>
                   </td>
@@ -153,10 +207,10 @@ export default function RemoteApprovalsPanel() {
                 </tr>
               ))}
               {!loading && list.length === 0 && (
-                <tr><td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">No {status === 'all' ? '' : status} requests.</td></tr>
+                <tr><td colSpan={7} className="py-8 text-center text-[var(--color-text-muted)]">No {status === 'all' ? '' : status} requests.</td></tr>
               )}
               {loading && (
-                <tr><td colSpan={6} className="py-8 text-center text-[var(--color-text-muted)]">Loading…</td></tr>
+                <tr><td colSpan={7} className="py-8 text-center text-[var(--color-text-muted)]">Loading…</td></tr>
               )}
             </tbody>
           </table>

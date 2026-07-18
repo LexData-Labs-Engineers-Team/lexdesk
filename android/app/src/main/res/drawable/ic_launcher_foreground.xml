@@ -6,28 +6,28 @@
     android:viewportHeight="108">
 
     <!--
-        AttendDesk "AD" wordmark, sized to fit comfortably inside the
-        launcher circle mask (safe zone is 72dp; this mark uses ~50dp
-        with ~11dp of padding on each side).
+        TeamOS "TO" wordmark, sized to fit inside the launcher circle mask
+        (safe zone is 72dp; this mark uses ~48dp wide, centered, with ample
+        padding). White strokes on the matte-black brand background.
     -->
 
-    <!-- Letter A: two diagonals meeting at the apex + horizontal crossbar. -->
+    <!-- Letter T: top bar + vertical stem. -->
     <path
-        android:pathData="M29,72 L41,36 L53,72"
+        android:pathData="M29,38 L51,38"
         android:strokeColor="#FFFFFF"
         android:strokeWidth="6"
         android:strokeLineCap="round"
         android:strokeLineJoin="round" />
     <path
-        android:pathData="M33,60 L49,60"
+        android:pathData="M40,38 L40,71"
         android:strokeColor="#FFFFFF"
         android:strokeWidth="6"
         android:strokeLineCap="round"
         android:strokeLineJoin="round" />
 
-    <!-- Letter D: vertical edge on the left, half-ellipse on the right. -->
+    <!-- Letter O: upright ring centered at (66,54), rx 11 / ry 16. -->
     <path
-        android:pathData="M59,36 L68,36 Q79,36 79,54 Q79,72 68,72 L59,72 Z"
+        android:pathData="M55,54 a11,16 0 1,0 22,0 a11,16 0 1,0 -22,0 Z"
         android:strokeColor="#FFFFFF"
         android:strokeWidth="6"
         android:strokeLineCap="round"

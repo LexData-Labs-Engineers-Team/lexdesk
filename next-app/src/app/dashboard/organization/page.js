@@ -41,7 +41,7 @@ export default function OrganizationPage() {
     }
   }, []);
 
-  useEffect(() => { if (role === 'admin' || role === 'superadmin') load(); }, [role, load]);
+  useEffect(() => { if (role === 'admin' || role === 'superadmin' || role === 'dev') load(); }, [role, load]);
 
   // Rename the company (org admins + superadmin). Separate from admin creation.
   const saveName = async (e) => {
@@ -101,7 +101,7 @@ export default function OrganizationPage() {
     try { await navigator.clipboard.writeText(created.temporaryPassword); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch { /* manual copy */ }
   };
 
-  if (role && role !== 'admin' && role !== 'superadmin') {
+  if (role && role !== 'admin' && role !== 'superadmin' && role !== 'dev') {
     return (
       <div className="flex flex-col gap-4">
         <PageHeader title="Organization" subtitle="Administrators only" />

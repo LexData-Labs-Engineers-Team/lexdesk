@@ -1,11 +1,20 @@
 import { NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { signToken, publicUser, verifyFirebasePassword, roleToLexdesk, initialsFromName } from '@/lib/auth';
-import { firebaseAdmin } from '@/lib/firebase';
-import { Paths } from '@/lib/paths';
+import { sql } from '@/lib/db';
 import { ORG_ID } from '@/lib/config';
+import { clientIpFromHeaders } from '@/lib/ip';
+import { enforceLoginGuards } from '@/lib/services/loginGuard';
 
 export const dynamic = 'force-dynamic';
+
+// Friendly, non-enumerating messages for the login device/IP guard.
+const LOGIN_GUARD_MESSAGES = {
+  device_limit_reached:
+    'You are already signed in on the maximum of 2 devices. Ask your admin to reset your devices to use a new one.',
+  login_ip_not_allowed: 'You can’t sign in from this network. Contact your admin.',
+  device_id_required: 'This browser could not be identified. Enable site storage and try again.',
+};
 
 // Login: verify the password against Firebase Auth (shared project), then read
 // the role from the org's Firestore user doc and mint LexDesk's own JWT. The
@@ -22,6 +31,10 @@ export async function POST(request) {
   if (!email || !password) {
     return NextResponse.json({ error: 'Email and password required' }, { status: 400 });
   }
+  // Device identity for the 2-device login cap (browser-generated; see lib/deviceId.js).
+  const deviceId = typeof body?.deviceId === 'string' ? body.deviceId.trim() : '';
+  const deviceName = typeof body?.deviceName === 'string' ? body.deviceName.trim().slice(0, 200) : null;
+  const clientIp = clientIpFromHeaders(request.headers);
 
   // System admin — env-configured (LEXDESK_SYSADMIN_EMAIL/PASSWORD), no Firebase
   // user. Mints a full 'superadmin' session (can reset the org admin's password
@@ -68,15 +81,18 @@ export async function POST(request) {
   // is the source of truth for role/name. Wrapped so any Firestore/config
   // failure returns JSON (not an unhandled HTML 500 the client can't parse).
   try {
-    const { db } = firebaseAdmin();
-    const snap = await db.doc(Paths.user(ORG_ID, verified.uid)).get();
-    if (!snap.exists) {
+    const rows = await sql`
+      SELECT role, name, employee_id
+      FROM users
+      WHERE firebase_uid = ${verified.uid} AND org_id = ${ORG_ID}
+    `;
+    if (rows.length === 0) {
       return NextResponse.json(
         { error: 'This account is not part of your organization. Ask your admin to add you.' },
         { status: 401 },
       );
     }
-    const data = snap.data();
+    const data = rows[0];
     const name = data.name || verified.email || email;
     const user = {
       id: verified.uid,
@@ -84,9 +100,27 @@ export async function POST(request) {
       name,
       role: roleToLexdesk(data.role),
       avatar: initialsFromName(name),
-      employeeId: data.employeeId ?? null,
+      employeeId: data.employee_id ?? null,
       orgId: ORG_ID,
     };
+
+    // Device cap + per-employee IP allowlist (employees / IT team only; admins
+    // are exempt). Runs after auth, before we mint a session.
+    try {
+      await enforceLoginGuards({
+        orgId: user.orgId,
+        uid: user.id,
+        role: user.role,
+        deviceId,
+        deviceName,
+        platform: 'web',
+        clientIp,
+      });
+    } catch (guardErr) {
+      const msg = LOGIN_GUARD_MESSAGES[guardErr.message] || 'Sign-in is not allowed on this device.';
+      return NextResponse.json({ error: msg, code: guardErr.message }, { status: guardErr.status || 403 });
+    }
+
     const token = signToken(user);
     return NextResponse.json({ token, user: publicUser(user) });
   } catch (err) {

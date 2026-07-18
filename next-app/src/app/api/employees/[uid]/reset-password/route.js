@@ -4,7 +4,7 @@ import { getEmployee, resetUserPassword } from '@/lib/backend';
 
 export const dynamic = 'force-dynamic';
 
-const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin';
+const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin' || user.role === 'dev';
 
 // POST: reset another user's password to a temp one (returned for display).
 // Admins may reset EMPLOYEES; a superadmin (system admin) may also reset ADMINS.
@@ -42,7 +42,7 @@ export async function POST(request, ctx) {
   if (targetRole === 'ADMIN' && !callerSuper) {
     return NextResponse.json({ error: 'Only a system admin can reset an admin’s password.' }, { status: 403 });
   }
-  if (targetRole !== 'EMPLOYEE' && targetRole !== 'ADMIN') {
+  if (targetRole !== 'EMPLOYEE' && targetRole !== 'ADMIN' && targetRole !== 'DEV') {
     return NextResponse.json({ error: 'This account’s password can’t be reset here.' }, { status: 403 });
   }
   if (!emp.email) return NextResponse.json({ error: 'This user has no email on file.' }, { status: 400 });

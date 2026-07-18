@@ -4,7 +4,7 @@ import { getEmployee, resetFace } from '@/lib/backend';
 
 export const dynamic = 'force-dynamic';
 
-const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin';
+const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin' || user.role === 'dev';
 
 // POST: admins only — clear an EMPLOYEE's face enrollment so they can enroll
 // again (enrollment is one-time). Org comes from the admin's session, so an
@@ -32,7 +32,7 @@ export async function POST(request, ctx) {
     }
   }
   if (!emp) return NextResponse.json({ error: 'Employee not found in your organization.' }, { status: 404 });
-  if (String(emp.role || '').toUpperCase() !== 'EMPLOYEE') {
+  if (!['EMPLOYEE', 'DEV'].includes(String(emp.role || '').toUpperCase())) {
     return NextResponse.json({ error: 'Only employee face enrollments can be reset here.' }, { status: 403 });
   }
 

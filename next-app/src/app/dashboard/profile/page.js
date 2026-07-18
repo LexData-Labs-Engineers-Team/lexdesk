@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import Avatar from '@/components/Avatar';
+import { apiFetch } from '@/lib/apiFetch';
 
 function initialsFromName(name) {
   const parts = (name || '').trim().split(/\s+/).filter(Boolean);
@@ -109,8 +110,8 @@ export default function MyProfilePage() {
         const token = localStorage.getItem('token');
         const headers = { Authorization: `Bearer ${token}` };
         const [profRes, offRes] = await Promise.all([
-          fetch('/api/me/profile', { headers, cache: 'no-store' }),
-          fetch('/api/me/office', { headers, cache: 'no-store' }),
+          apiFetch('/api/me/profile', { headers, cache: 'no-store' }),
+          apiFetch('/api/me/office', { headers, cache: 'no-store' }),
         ]);
         const profJson = await profRes.json().catch(() => ({}));
         const offJson = await offRes.json().catch(() => ({}));

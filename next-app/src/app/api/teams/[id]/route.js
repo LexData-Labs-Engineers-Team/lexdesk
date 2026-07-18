@@ -4,7 +4,7 @@ import { updateTeam, deleteTeam } from '@/lib/backend';
 
 export const dynamic = 'force-dynamic';
 
-const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin';
+const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin' || user.role === 'dev';
 
 // PATCH: admins only — rename a team and/or change its leader.
 export async function PATCH(request, ctx) {

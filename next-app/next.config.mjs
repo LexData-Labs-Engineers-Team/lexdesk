@@ -4,7 +4,9 @@ const nextConfig = {
   // (gRPC, etc.) break in the bundled output and crash route handlers at
   // runtime on Vercel (works in `next dev`, 500s in production). Externalizing
   // it makes the server require() it from node_modules instead.
-  serverExternalPackages: ['firebase-admin'],
+  // @neondatabase/serverless + ws (Postgres driver) are externalized for the
+  // same reason: ws has optional native deps and the driver is server-only.
+  serverExternalPackages: ['firebase-admin', '@neondatabase/serverless', 'ws'],
   // Dev-only: lets devices on the LAN (e.g. a phone) load the dev server's
   // /_next resources. Production builds ignore this.
   allowedDevOrigins: ['192.168.140.62'],

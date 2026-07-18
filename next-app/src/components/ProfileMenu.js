@@ -8,6 +8,7 @@ const ROLE_LABEL = {
   admin: 'Administrator',
   superadmin: 'Super Admin',
   employee: 'Employee',
+  dev: 'Dev',
   lexsysadmin: 'System Admin',
 };
 

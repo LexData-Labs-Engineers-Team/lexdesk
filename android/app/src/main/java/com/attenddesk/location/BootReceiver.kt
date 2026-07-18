@@ -61,7 +61,7 @@ class BootReceiver : BroadcastReceiver() {
             if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_IMMUTABLE else 0
         val notif = NotificationCompat.Builder(context, LocationNotifications.CHANNEL_STATUS)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("AttendDesk resumed location tracking")
+            .setContentTitle("TeamOS resumed location tracking")
             .setContentText("Continuous tracking restarted after your device booted.")
             .setContentIntent(PendingIntent.getActivity(context, 0, intent, flags))
             .setPriority(NotificationCompat.PRIORITY_LOW)

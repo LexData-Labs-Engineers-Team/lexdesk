@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { apiFetch } from './apiFetch';
 
 // Fetches org-wide AttendDesk data through the (admin-gated) /api/attenddesk
 // proxy. Pass the resources a page needs, e.g. useAttendData(['employees','attendance']).
@@ -48,7 +49,7 @@ export function useAttendData(resources = ['employees', 'attendance'], opts = {}
       const results = await Promise.all(
         list.map(async (r) => {
           const q = r === 'attendance' ? attendanceQuery(mk) : (RESOURCE_QUERY[r] || `resource=${r}`);
-          const res = await fetch(`/api/attenddesk?${q}`, {
+          const res = await apiFetch(`/api/attenddesk?${q}`, {
             headers: { Authorization: `Bearer ${token}` },
             cache: 'no-store',
           });

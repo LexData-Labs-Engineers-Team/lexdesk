@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import PageHeader from '@/components/PageHeader';
+import { apiFetch } from '@/lib/apiFetch';
 
 // Only the editable settings are shown on this page. `query` is appended verbatim.
 const RESOURCES = [
@@ -26,6 +27,7 @@ function PolicyEditor({ data, onSaved }) {
       requireGeo: !!p.requireGeo,
       requireQr: !!p.requireQr,
       requireFace: !!p.requireFace,
+      requireIp: !!p.requireIp,
       faceThreshold: p.faceThreshold ?? 0.7,
       gpsAccuracyMaxMeters: p.gpsAccuracyMaxMeters ?? 50,
     };
@@ -49,6 +51,7 @@ function PolicyEditor({ data, onSaved }) {
         requireGeo: !!form.requireGeo,
         requireQr: !!form.requireQr,
         requireFace: !!form.requireFace,
+        requireIp: !!form.requireIp,
         faceThreshold: Number(form.faceThreshold),
         gpsAccuracyMaxMeters: Number(form.gpsAccuracyMaxMeters),
       };
@@ -70,6 +73,7 @@ function PolicyEditor({ data, onSaved }) {
     ['requireGeo', 'Require GPS / geofence'],
     ['requireQr', 'Require QR'],
     ['requireFace', 'Require face'],
+    ['requireIp', 'Require office IP (web)'],
   ];
   return (
     <form onSubmit={save} className="flex flex-col gap-4">
@@ -114,6 +118,7 @@ function OfficeEditor({ data, onSaved }) {
       endTime: o.endTime || '',
       allowedSsids: (o.allowedSsids || []).join('\n'),
       allowedBssids: (o.allowedBssids || []).join('\n'),
+      allowedIps: (o.allowedIps || []).join('\n'),
     };
   };
 
@@ -139,6 +144,7 @@ function OfficeEditor({ data, onSaved }) {
         radiusMeters: Number(form.radiusMeters),
         allowedSsids: lines(form.allowedSsids),
         allowedBssids: lines(form.allowedBssids),
+        allowedIps: lines(form.allowedIps),
       };
       if (form.startTime) body.startTime = form.startTime;
       if (form.endTime) body.endTime = form.endTime;
@@ -192,6 +198,11 @@ function OfficeEditor({ data, onSaved }) {
           <label className="text-xs font-medium text-[var(--color-text-muted)]">Allowed BSSIDs (aa:bb:cc:dd:ee:ff, one per line)</label>
           <textarea rows={3} value={form.allowedBssids} onChange={set('allowedBssids')} className={`${inputCls} resize-y`} />
         </div>
+        <div className="flex flex-col gap-1.5 sm:col-span-2">
+          <label className="text-xs font-medium text-[var(--color-text-muted)]">Allowed office IPs — web check-in (one IP or CIDR per line)</label>
+          <textarea rows={3} value={form.allowedIps} onChange={set('allowedIps')} className={`${inputCls} resize-y`} placeholder="e.g. 203.0.113.42 or 203.0.113.0/24" />
+          <span className="text-[11px] text-[var(--color-text-muted)]">Your office&apos;s PUBLIC internet IP — get it at api.ipify.org from an office PC. NOT a 192.168.x.x LAN address. Only enforced when &ldquo;Require office IP&rdquo; is on.</span>
+        </div>
       </div>
       {err && <p className="text-sm text-[var(--color-red)]">{err}</p>}
       {ok && <p className="text-sm text-[var(--color-green)]">{ok}</p>}
@@ -213,7 +224,7 @@ export default function AttendDeskPage() {
       RESOURCES.map(async (r) => {
         try {
           const qs = `resource=${r.key}${r.query ? '&' + r.query : ''}`;
-          const res = await fetch(`/api/attenddesk?${qs}`, {
+          const res = await apiFetch(`/api/attenddesk?${qs}`, {
             headers: { Authorization: `Bearer ${token}` },
             cache: 'no-store',
           });

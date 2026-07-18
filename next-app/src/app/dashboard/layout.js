@@ -6,6 +6,7 @@ import Link from 'next/link';
 import SidebarNav from '@/components/SidebarNav';
 import ProfileMenu from '@/components/ProfileMenu';
 import BrandMark from '@/components/BrandMark';
+import { apiFetch } from '@/lib/apiFetch';
 
 export default function DashboardLayout({ children }) {
   const [user, setUser] = useState(null);
@@ -36,7 +37,7 @@ export default function DashboardLayout({ children }) {
       // IT Team role — its own allowed sections (Accessories/Tracking added later).
       if (parsed.role === 'it_team') {
         const path = window.location.pathname;
-        const allowed = ['/dashboard/my-dashboard', '/dashboard/people', '/dashboard/attendance', '/dashboard/approvals', '/dashboard/accessories', '/dashboard/tracking', '/dashboard/profile'];
+        const allowed = ['/dashboard/my-dashboard', '/dashboard/people', '/dashboard/attendance', '/dashboard/approvals', '/dashboard/accessories', '/dashboard/tracking', '/dashboard/my-recon', '/dashboard/profile'];
         if (!allowed.some((p) => path === p || path.startsWith(p + '/'))) {
           router.replace('/dashboard/my-dashboard');
         }
@@ -63,7 +64,7 @@ export default function DashboardLayout({ children }) {
       let role;
       try { role = JSON.parse(localStorage.getItem('user') || 'null')?.role; } catch { role = null; }
       if (role === 'lexsysadmin') return; // no org profile for the platform admin
-      fetch('/api/me/profile', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+      apiFetch('/api/me/profile', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => { if (d?.profile) setPhotoUrl(d.profile.photoUrl || null); })
         .catch(() => {});
@@ -84,10 +85,10 @@ export default function DashboardLayout({ children }) {
   useEffect(() => {
     let stored;
     try { stored = JSON.parse(localStorage.getItem('user') || 'null'); } catch { stored = null; }
-    if (!stored || stored.role !== 'employee') return;
+    if (!stored || (stored.role !== 'employee' && stored.role !== 'dev')) return;
     const token = localStorage.getItem('token');
     if (!token) return;
-    fetch('/api/teams', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+    apiFetch('/api/teams', { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { teams: [] }))
       .then((d) => setIsTeamLeader((d.teams || []).some((t) => String(t.leaderUid) === String(stored.id))))
       .catch(() => {});

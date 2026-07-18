@@ -16,9 +16,11 @@ object ApiClient {
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
+        coerceInputValues = true
     }
 
-    fun build(baseUrl: String): AttendApi {
+    fun build(baseUrl: String, deviceId: String): AttendApi {
+        val deviceName = (android.os.Build.MODEL ?: "Android").take(80)
         val authInterceptor = Interceptor { chain ->
             val req = chain.request()
             val user = FirebaseAuth.getInstance().currentUser
@@ -27,10 +29,12 @@ object ApiClient {
                     runBlocking { user.getIdToken(false).await().token }
                 }.getOrNull()
             } else null
-            val newReq = if (token != null) {
-                req.newBuilder().header("Authorization", "Bearer $token").build()
-            } else req
-            chain.proceed(newReq)
+            // Device identity for the server-side 2-device login cap (see loginGuard.js).
+            val builder = req.newBuilder()
+                .header("X-Device-Id", deviceId)
+                .header("X-Device-Name", deviceName)
+            if (token != null) builder.header("Authorization", "Bearer $token")
+            chain.proceed(builder.build())
         }
 
         // On 401, force-refresh the Firebase ID token once and retry.
@@ -45,12 +49,40 @@ object ApiClient {
             response.request.newBuilder().header("Authorization", "Bearer $fresh").build()
         }
 
+        // Retry a GET once on a transient failure (IOException/timeout, or a
+        // 502/503/504) so a Neon cold-start — the DB waking from auto-suspend —
+        // surfaces as a slightly slower load instead of "couldn't load". GET-only,
+        // so a POST (e.g. check-in) is never re-sent. Placed after authInterceptor
+        // so the retried request keeps its Authorization header; 401s are left to
+        // tokenAuthenticator above.
+        val retryInterceptor = Interceptor { chain ->
+            val request = chain.request()
+            if (!request.method.equals("GET", ignoreCase = true)) {
+                chain.proceed(request)
+            } else {
+                try {
+                    val response = chain.proceed(request)
+                    if (response.code in setOf(502, 503, 504)) {
+                        response.close()
+                        Thread.sleep(1200)
+                        chain.proceed(request)
+                    } else {
+                        response
+                    }
+                } catch (e: java.io.IOException) {
+                    Thread.sleep(1200)
+                    chain.proceed(request)
+                }
+            }
+        }
+
         val client = OkHttpClient.Builder()
             .addInterceptor(authInterceptor)
+            .addInterceptor(retryInterceptor)
             .authenticator(tokenAuthenticator)
             .addInterceptor(HttpLoggingInterceptor().apply { level = HttpLoggingInterceptor.Level.BASIC })
             .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
+            .readTimeout(45, TimeUnit.SECONDS)
             .build()
 
         val finalUrl = if (baseUrl.endsWith("/")) baseUrl else "$baseUrl/"

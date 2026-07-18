@@ -4,7 +4,7 @@ import { createEmployee, getTeams } from '@/lib/backend';
 
 export const dynamic = 'force-dynamic';
 
-const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin';
+const isAdmin = (user) => user.role === 'admin' || user.role === 'superadmin' || user.role === 'dev';
 
 // POST: provision a REAL AttendDesk employee account, returning the temporary
 // password so the creator can share it. Admins create anyone (any team; only the

@@ -3,6 +3,7 @@ package com.attenddesk.ui.components
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,7 +28,7 @@ fun DonutChart(
     modifier: Modifier = Modifier,
     diameter: Dp = 180.dp,
     ringWidth: Dp = 24.dp,
-    trackColor: Color = Color(0xFFE6EAF2),
+    trackColor: Color = MaterialTheme.colorScheme.surfaceVariant,
     center: @Composable () -> Unit = {},
 ) {
     val total = segments.sumOf { it.value.toDouble() }.toFloat()

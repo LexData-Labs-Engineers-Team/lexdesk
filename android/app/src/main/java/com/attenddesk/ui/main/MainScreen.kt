@@ -9,8 +9,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.EventAvailable
-import androidx.compose.material.icons.outlined.FreeBreakfast
-import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.NotificationsActive
@@ -128,9 +126,7 @@ fun MainScreen(
             val idx = visibleTabs.indexOf(Tab.Home); if (idx >= 0) selected = idx
             scope.launch { drawerState.close() }
         })
-        add(DrawerItem("Break Time", Icons.Outlined.FreeBreakfast) { closeThen(Routes.BREAK_TIME) })
         add(DrawerItem("Attendance Reminder", Icons.Outlined.NotificationsActive) { closeThen(Routes.ATT_REMINDER) })
-        add(DrawerItem("Directory", Icons.Outlined.Groups) { closeThen(Routes.DIRECTORY) })
         if (isManager) add(DrawerItem("Approvals", Icons.Outlined.RuleFolder) { closeThen(Routes.approvals(0)) })
         add(DrawerItem("My QR Code", Icons.Outlined.QrCode2) { closeThen(Routes.MY_QR) })
         add(DrawerItem("My Profile", Icons.Outlined.Person) { closeThen(Routes.PROFILE) })

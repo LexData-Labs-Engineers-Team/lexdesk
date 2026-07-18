@@ -7,7 +7,8 @@ import PageHeader from '@/components/PageHeader';
 import EmployeeAvatar from '@/components/EmployeeAvatar';
 import MemberCard from '@/components/people/MemberCard';
 import { useAttendData } from '@/lib/useAttendData';
-import { perEmployeeStats, fmtTime, onlyEmployees, inBdMonth } from '@/lib/attend';
+import { perEmployeeStats, fmtTime, onlyStaff, inBdMonth } from '@/lib/attend';
+import { apiFetch } from '@/lib/apiFetch';
 
 const PAGE_SIZES = [10, 25, 50];
 // Canonical departments — always offered even before their team doc exists.
@@ -17,6 +18,7 @@ const DEPARTMENTS = ['Engineering', 'Marketing', 'Project'];
 const ROLE_OPTIONS = [
   { key: 'team_leader', label: 'Team Leader' },
   { key: 'it', label: 'IT' },
+  { key: 'dev', label: 'Dev' },
 ];
 
 const inputCls =
@@ -33,7 +35,8 @@ export default function EmployeesPanel({ initialView = 'grid' } = {}) {
   const { employees, events, loading, error, refresh } = useAttendData(['employees', 'attendance'], { month: ym });
   const [teams, setTeams] = useState([]);
   // A system admin (superadmin) needs to see ADMINS too — to open the org
-  // admin's profile and reset their password. Regular admins see employees only.
+  // admin's profile and reset their password. Regular admins see staff
+  // (employees + IT team) so IT members' login-security controls are reachable.
   const [isSuper, setIsSuper] = useState(false);
   // Management (role assignment) is admin/superadmin only — the IT Team role
   // sees the employee views but not the Management tab/actions.
@@ -42,7 +45,7 @@ export default function EmployeesPanel({ initialView = 'grid' } = {}) {
     try {
       const r = JSON.parse(localStorage.getItem('user') || 'null')?.role;
       setIsSuper(r === 'superadmin');
-      setIsAdmin(r === 'admin' || r === 'superadmin');
+      setIsAdmin(r === 'admin' || r === 'superadmin' || r === 'dev');
     } catch { setIsSuper(false); setIsAdmin(false); }
   }, []);
 
@@ -69,7 +72,7 @@ export default function EmployeesPanel({ initialView = 'grid' } = {}) {
   const authHeader = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 
   const loadTeams = useCallback(() => {
-    fetch('/api/teams', { headers: authHeader(), cache: 'no-store' })
+    apiFetch('/api/teams', { headers: authHeader(), cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : { teams: [] }))
       .then((j) => setTeams(j.teams || []))
       .catch(() => setTeams([]));
@@ -101,7 +104,7 @@ export default function EmployeesPanel({ initialView = 'grid' } = {}) {
 
   const rows = useMemo(
     () =>
-      (isSuper ? (employees || []) : onlyEmployees(employees)).map((e) => {
+      (isSuper ? (employees || []) : onlyStaff(employees)).map((e) => {
         const s = stats[e.id] || { presentDays: 0, lateDays: 0, lastCheckIn: null };
         return { ...e, presentDays: s.presentDays, late: s.lateDays, lastCheckIn: s.lastCheckIn };
       }),
@@ -140,7 +143,7 @@ export default function EmployeesPanel({ initialView = 'grid' } = {}) {
   // Everyone can be picked for a management role except org admins (the backend
   // also refuses to change admin/superadmin accounts).
   const assignable = useMemo(
-    () => (employees || []).filter((e) => { const r = roleOf(e); return r !== 'ADMIN' && r !== 'SUPER_ADMIN'; }),
+    () => (employees || []).filter((e) => { const r = roleOf(e); return r !== 'ADMIN' && r !== 'SUPER_ADMIN' && r !== 'DEV'; }),
     [employees],
   );
   const mgmtSuggestions = useMemo(() => {
@@ -158,7 +161,10 @@ export default function EmployeesPanel({ initialView = 'grid' } = {}) {
     const its = (employees || [])
       .filter((e) => roleOf(e) === 'IT_TEAM')
       .map((e) => ({ key: `it:${e.id}`, kind: 'it', refId: e.id, employee: e.name || e.email, department: e.department || e.teamName || '—', role: 'IT' }));
-    return [...leaders, ...its];
+    const devs = (employees || [])
+      .filter((e) => roleOf(e) === 'DEV')
+      .map((e) => ({ key: `dev:${e.id}`, kind: 'dev', refId: e.id, employee: e.name || e.email, department: e.department || e.teamName || '—', role: 'Dev' }));
+    return [...leaders, ...its, ...devs];
   }, [teams, employees]);
 
   const closeMgmt = () => {

@@ -2,17 +2,19 @@ package com.attenddesk.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Brand ramp — mirrors web tailwind.config.ts
-val Brand50  = Color(0xFFEFF6FF)
-val Brand100 = Color(0xFFDBEAFE)
-val Brand200 = Color(0xFFBFDBFE)
-val Brand300 = Color(0xFF93C5FD)
-val Brand400 = Color(0xFF60A5FA)
-val Brand500 = Color(0xFF2563EB)
-val Brand600 = Color(0xFF1D4ED8)
-val Brand700 = Color(0xFF1E40AF)
-val Brand800 = Color(0xFF1E3A8A)
-val Brand900 = Color(0xFF172554)
+// Brand ramp — neutralized to grayscale to match the web's monochrome theme
+// (black / white / gray). Brand500 is the mid-gray "accent"; every component
+// that hard-codes a Brand* color now reads as neutral gray instead of blue.
+val Brand50  = Color(0xFFF5F5F5)
+val Brand100 = Color(0xFFEDEDED)
+val Brand200 = Color(0xFFD4D4D4)
+val Brand300 = Color(0xFFB0B0B0)
+val Brand400 = Color(0xFF8A8A8A)
+val Brand500 = Color(0xFF5A5A5A)
+val Brand600 = Color(0xFF3A3A3A)
+val Brand700 = Color(0xFF242424)
+val Brand800 = Color(0xFF1A1A1A)
+val Brand900 = Color(0xFF000000)
 
 // Neutral / slate
 val Slate50  = Color(0xFFF8FAFC)
@@ -26,10 +28,10 @@ val Slate700 = Color(0xFF334155)
 val Slate800 = Color(0xFF1E293B)
 val Slate900 = Color(0xFF0F172A)
 
-// Light surfaces (matches web `:root` --bg / --bg-elevated / --border)
-val SurfaceBg       = Color(0xFFF6F8FB)
+// Light surfaces — match web light mode (bg #FFFFFF, card #FFFFFF, border #AFAFAF).
+val SurfaceBg       = Color(0xFFFFFFFF)
 val SurfaceElevated = Color(0xFFFFFFFF)
-val OutlineSubtle   = Color(0xFFE2E8F0)
+val OutlineSubtle   = Color(0xFFE2E2E2)
 
 // Dark surfaces — deep matte black monochrome theme.
 val SurfaceBgDark       = Color(0xFF000000)
@@ -49,9 +51,9 @@ val WarnFg     = Color(0xFF92400E)
 val WarnBg     = Color(0xFFFFFBEB)
 val WarnBorder = Color(0xFFFDE68A)
 
-val InfoFg     = Color(0xFF1E40AF)
-val InfoBg     = Color(0xFFEFF6FF)
-val InfoBorder = Color(0xFFBFDBFE)
+val InfoFg     = Color(0xFF212121)
+val InfoBg     = Color(0xFFECECEC)
+val InfoBorder = Color(0xFFD4D4D4)
 
 val MutedFg     = Color(0xFF475569)
 val MutedBg     = Color(0xFFF1F5F9)
@@ -70,9 +72,9 @@ val WarnFgDark     = Color(0xFFFCD34D) // amber-300
 val WarnBgDark     = Color(0xFF451A03) // amber-950
 val WarnBorderDark = Color(0xFF78350F) // amber-900
 
-val InfoFgDark     = Color(0xFF93C5FD) // brand-300
-val InfoBgDark     = Color(0xFF172554) // brand-900
-val InfoBorderDark = Color(0xFF1E40AF) // brand-700
+val InfoFgDark     = Color(0xFFD4D4D4) // neutral (was brand blue)
+val InfoBgDark     = Color(0xFF2A2A2A)
+val InfoBorderDark = Color(0xFF404040)
 
 val MutedFgDark     = Color(0xFFCBD5E1) // slate-300
 val MutedBgDark     = Color(0xFF1E293B) // slate-800

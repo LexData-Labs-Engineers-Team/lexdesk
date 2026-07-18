@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getMobileUser, mobileAuthError } from '@/lib/mobileAuth';
-import { firebaseAdmin, FieldValue } from '@/lib/firebase';
-import { Paths } from '@/lib/paths';
+import { sql } from '@/lib/db';
 import { uploadUserPhoto, deleteUserPhoto, signedReadUrl } from '@/lib/storage';
 
 export const dynamic = 'force-dynamic';
@@ -27,11 +26,7 @@ export async function POST(request) {
     if (bytes.length <= 0 || bytes.length > MAX_BYTES) return NextResponse.json({ error: 'file_too_large' }, { status: 413 });
 
     const { storagePath } = await uploadUserPhoto(user.orgId, user.uid, bytes, contentType);
-    const { db } = firebaseAdmin();
-    await db.doc(Paths.user(user.orgId, user.uid)).update({
-      photoStoragePath: storagePath,
-      photoUpdatedAt: FieldValue.serverTimestamp(),
-    });
+    await sql`UPDATE users SET photo_storage_path = ${storagePath}, photo_updated_at = now() WHERE firebase_uid = ${user.uid} AND org_id = ${user.orgId}`;
     return NextResponse.json({ ok: true, photoUrl: await signedReadUrl(storagePath) });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: e.status || 500 });
@@ -48,11 +43,7 @@ export async function DELETE(request) {
   }
   try {
     await deleteUserPhoto(user.orgId, user.uid);
-    const { db } = firebaseAdmin();
-    await db.doc(Paths.user(user.orgId, user.uid)).update({
-      photoStoragePath: FieldValue.delete(),
-      photoUpdatedAt: FieldValue.delete(),
-    });
+    await sql`UPDATE users SET photo_storage_path = NULL, photo_updated_at = NULL WHERE firebase_uid = ${user.uid} AND org_id = ${user.orgId}`;
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: e.message }, { status: e.status || 500 });

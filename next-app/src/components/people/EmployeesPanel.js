@@ -2,9 +2,10 @@
 
 import { useMemo, useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/PageHeader';
 import EmployeeAvatar from '@/components/EmployeeAvatar';
-import MonthNav from '@/components/MonthNav';
+import MemberCard from '@/components/people/MemberCard';
 import { useAttendData } from '@/lib/useAttendData';
 import { perEmployeeStats, fmtTime, onlyStaff, inBdMonth } from '@/lib/attend';
 import { apiFetch } from '@/lib/apiFetch';
@@ -13,24 +14,39 @@ const PAGE_SIZES = [10, 25, 50];
 // Canonical departments — always offered even before their team doc exists.
 // (IT is a role, not a department, so it's intentionally not listed here.)
 const DEPARTMENTS = ['Engineering', 'Marketing', 'Project'];
+// Assignable management roles (mirrors the backend /api/management/role).
+const ROLE_OPTIONS = [
+  { key: 'team_leader', label: 'Team Leader' },
+  { key: 'it', label: 'IT' },
+  { key: 'dev', label: 'Dev' },
+];
 
 const inputCls =
   'bg-[var(--color-bg)] border border-[var(--color-card-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text-main)] focus:outline-none focus:border-[var(--color-purple)]';
 
-export default function EmployeesPanel() {
-  const [view, setView] = useState('list');
+export default function EmployeesPanel({ initialView = 'grid' } = {}) {
+  const router = useRouter();
+  const [view, setView] = useState(initialView);
   const [search, setSearch] = useState('');
   const [pageSize, setPageSize] = useState(25);
   const [page, setPage] = useState(1);
-  const [ym, setYm] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
+  // Present/late stats in the List view are scoped to the current month.
+  const [ym] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const { employees, events, loading, error, refresh } = useAttendData(['employees', 'attendance'], { month: ym });
   const [teams, setTeams] = useState([]);
   // A system admin (superadmin) needs to see ADMINS too — to open the org
   // admin's profile and reset their password. Regular admins see staff
   // (employees + IT team) so IT members' login-security controls are reachable.
   const [isSuper, setIsSuper] = useState(false);
+  // Management (role assignment) is admin/superadmin only — the IT Team role
+  // sees the employee views but not the Management tab/actions.
+  const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
-    try { setIsSuper(JSON.parse(localStorage.getItem('user') || 'null')?.role === 'superadmin'); } catch { setIsSuper(false); }
+    try {
+      const r = JSON.parse(localStorage.getItem('user') || 'null')?.role;
+      setIsSuper(r === 'superadmin');
+      setIsAdmin(r === 'admin' || r === 'superadmin' || r === 'dev');
+    } catch { setIsSuper(false); setIsAdmin(false); }
   }, []);
 
   // Add-employee modal state.
@@ -39,6 +55,19 @@ export default function EmployeesPanel() {
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState('');
   const [created, setCreated] = useState(null); // { email, temporaryPassword }
+
+  // Add-management-role modal + shared op feedback (assign / revoke).
+  const [feedback, setFeedback] = useState('');
+  const [opError, setOpError] = useState('');
+  const [busyKey, setBusyKey] = useState('');
+  const [showMgmt, setShowMgmt] = useState(false);
+  const [mgmtQuery, setMgmtQuery] = useState('');
+  const [mgmtFocused, setMgmtFocused] = useState(false);
+  const [mgmtEmp, setMgmtEmp] = useState(null);
+  const [mgmtDept, setMgmtDept] = useState('');
+  const [mgmtRole, setMgmtRole] = useState('team_leader');
+  const [mgmtSaving, setMgmtSaving] = useState(false);
+  const [mgmtError, setMgmtError] = useState('');
 
   const authHeader = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 
@@ -109,6 +138,96 @@ export default function EmployeesPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filtered, teams]);
 
+  // ── Management (roles) ──────────────────────────────────────────────────
+  const roleOf = (e) => String(e.role || '').toUpperCase();
+  // Everyone can be picked for a management role except org admins (the backend
+  // also refuses to change admin/superadmin accounts).
+  const assignable = useMemo(
+    () => (employees || []).filter((e) => { const r = roleOf(e); return r !== 'ADMIN' && r !== 'SUPER_ADMIN' && r !== 'DEV'; }),
+    [employees],
+  );
+  const mgmtSuggestions = useMemo(() => {
+    const q = mgmtQuery.trim().toLowerCase();
+    const base = q
+      ? assignable.filter((e) => (e.name || '').toLowerCase().includes(q) || (e.email || '').toLowerCase().includes(q))
+      : assignable;
+    return base.slice(0, 50);
+  }, [assignable, mgmtQuery]);
+  // Who currently holds a management role: team leaders (from teams) + IT.
+  const roleRows = useMemo(() => {
+    const leaders = (teams || [])
+      .filter((t) => t.leaderUid)
+      .map((t) => ({ key: `lead:${t.id}`, kind: 'lead', refId: t.id, employee: t.leaderName || '—', department: t.name, role: 'Team Leader' }));
+    const its = (employees || [])
+      .filter((e) => roleOf(e) === 'IT_TEAM')
+      .map((e) => ({ key: `it:${e.id}`, kind: 'it', refId: e.id, employee: e.name || e.email, department: e.department || e.teamName || '—', role: 'IT' }));
+    const devs = (employees || [])
+      .filter((e) => roleOf(e) === 'DEV')
+      .map((e) => ({ key: `dev:${e.id}`, kind: 'dev', refId: e.id, employee: e.name || e.email, department: e.department || e.teamName || '—', role: 'Dev' }));
+    return [...leaders, ...its, ...devs];
+  }, [teams, employees]);
+
+  const closeMgmt = () => {
+    setShowMgmt(false);
+    setMgmtQuery(''); setMgmtFocused(false); setMgmtEmp(null);
+    setMgmtDept(''); setMgmtRole('team_leader'); setMgmtError('');
+  };
+
+  const submitMgmt = async (ev) => {
+    ev.preventDefault();
+    setMgmtError('');
+    if (!mgmtEmp) { setMgmtError('Select an employee.'); return; }
+    if (mgmtRole === 'team_leader' && !mgmtDept) { setMgmtError('Select a department.'); return; }
+    setMgmtSaving(true);
+    try {
+      const res = await fetch('/api/management/role', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeader() },
+        body: JSON.stringify({ uid: mgmtEmp.id, department: mgmtDept, role: mgmtRole }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      setFeedback('Management role assigned.');
+      setOpError('');
+      setTimeout(() => setFeedback(''), 3000);
+      closeMgmt();
+      loadTeams();
+      refresh();
+    } catch (err) {
+      setMgmtError(err.message);
+    } finally {
+      setMgmtSaving(false);
+    }
+  };
+
+  // Revoke a management role from the Management table.
+  const revokeMgmt = async (row) => {
+    if (!window.confirm(`Remove ${row.employee} as ${row.role}?`)) return;
+    setBusyKey(row.key);
+    setOpError('');
+    try {
+      const res = row.kind === 'lead'
+        ? await fetch(`/api/teams/${encodeURIComponent(row.refId)}`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeader() },
+            body: JSON.stringify({ leaderUid: null }),
+          })
+        : await fetch(`/api/employees/${encodeURIComponent(row.refId)}/role`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json', ...authHeader() },
+            body: JSON.stringify({ role: 'EMPLOYEE' }),
+          });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      setFeedback('Management role removed.');
+      setTimeout(() => setFeedback(''), 3000);
+      loadTeams();
+      refresh();
+    } catch (err) {
+      setOpError(err.message);
+    } finally {
+      setBusyKey('');
+    }
+  };
+
   const submitAdd = async (e) => {
     e.preventDefault();
     setAddError('');
@@ -170,23 +289,16 @@ export default function EmployeesPanel() {
     setAddError('');
   };
 
-  // One employee tile — shared by the Grid and Department views.
+  // One employee tile — shared by the Grid and Department views. Uses the rich
+  // member card (same design as the Attendance → Team Members view); clicking
+  // opens the employee's profile. teamName is resolved so the card's Department
+  // row falls back to the team name when no department is set.
   const empCard = (e) => (
-    <Link key={e.id} href={`/dashboard/employees/${encodeURIComponent(e.id)}`} className="card no-underline hover:border-[var(--color-purple)] transition-all">
-      <div className="flex flex-col items-center text-center gap-3">
-        <EmployeeAvatar id={e.id} name={e.name} size={56} />
-        <div>
-          <div className="font-semibold text-[var(--color-text-main)] truncate max-w-[150px] flex items-center justify-center gap-1.5">
-            {e.name || '—'}
-            {leaderUids.has(String(e.id)) && <span className="text-[9px] font-bold uppercase px-1 py-0.5 rounded bg-[rgba(150,150,150,0.15)] text-[var(--color-purple)]">Lead</span>}
-          </div>
-          <div className="text-xs text-[var(--color-text-muted)] truncate max-w-[150px]">{e.email}</div>
-          {e.designation && <div className="text-xs text-[var(--color-text-muted)] truncate max-w-[150px]">{e.designation}</div>}
-          {teamNameOf(e) && <div className="text-xs text-[var(--color-purple)] mt-0.5">{teamNameOf(e)}</div>}
-        </div>
-        <div className="text-xs text-[var(--color-text-muted)]">{e.presentDays} present days · <span className="text-[var(--color-yellow)]">{e.late} late</span></div>
-      </div>
-    </Link>
+    <MemberCard
+      key={e.id}
+      m={{ ...e, teamName: teamNameOf(e) }}
+      onOpen={(m) => router.push(`/dashboard/employees/${encodeURIComponent(m.id)}`)}
+    />
   );
 
   return (
@@ -197,13 +309,15 @@ export default function EmployeesPanel() {
         actions={
           <div className="flex items-center gap-2">
             <button onClick={() => { setShowAdd(true); setCreated(null); setAddError(''); }} className="btn-primary py-2 px-4 text-sm">+ Add employee</button>
-            <MonthNav value={ym} onChange={setYm} />
-            <button onClick={refresh} className="btn-outline py-2 px-4 text-sm">Refresh</button>
+            {isAdmin && <button onClick={() => { setShowMgmt(true); setMgmtError(''); }} className="btn-primary py-2 px-4 text-sm">+ Add Management</button>}
+            <button onClick={() => { refresh(); loadTeams(); }} className="btn-outline py-2 px-4 text-sm">Refresh</button>
           </div>
         }
       />
 
       {error && <div className="card text-[var(--color-red)] text-sm">{error}</div>}
+      {feedback && <div className="card text-[var(--color-green)] text-sm">{feedback}</div>}
+      {opError && <div className="card text-[var(--color-red)] text-sm">{opError}</div>}
 
       {showAdd && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={closeAdd}>
@@ -274,31 +388,160 @@ export default function EmployeesPanel() {
         </div>
       )}
 
+      {showMgmt && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={closeMgmt}>
+          <div className="card glossy w-full max-w-md flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-[var(--color-text-main)]">Add management role</h2>
+              <button onClick={closeMgmt} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-main)] text-lg leading-none" aria-label="Close">✕</button>
+            </div>
+
+            <form onSubmit={submitMgmt} className="flex flex-col gap-4">
+              {/* Employee autocomplete */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-[var(--color-text-muted)]">Employee</label>
+                {mgmtEmp ? (
+                  <div className="flex items-center justify-between gap-2 bg-[var(--color-bg)] border border-[var(--color-card-border)] rounded-lg px-3 py-2">
+                    <div>
+                      <div className="text-sm text-[var(--color-text-main)]">{mgmtEmp.name || '—'}</div>
+                      <div className="text-xs text-[var(--color-text-muted)]">{mgmtEmp.email}</div>
+                    </div>
+                    <button type="button" onClick={() => { setMgmtEmp(null); setMgmtQuery(''); }} className="text-[var(--color-text-muted)] hover:text-[var(--color-text-main)] text-sm" aria-label="Clear">✕</button>
+                  </div>
+                ) : (
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={mgmtQuery}
+                      onChange={(e) => setMgmtQuery(e.target.value)}
+                      onFocus={() => setMgmtFocused(true)}
+                      onBlur={() => setTimeout(() => setMgmtFocused(false), 150)}
+                      placeholder="Search or select an employee…"
+                      className={`${inputCls} w-full`}
+                      autoFocus
+                    />
+                    {mgmtFocused && (
+                      <div className="absolute z-10 mt-1 w-full card p-1 max-h-56 overflow-y-auto">
+                        {mgmtSuggestions.map((e) => (
+                          <button
+                            type="button"
+                            key={e.id}
+                            onMouseDown={(ev) => ev.preventDefault()}
+                            onClick={() => { setMgmtEmp(e); setMgmtQuery(''); setMgmtFocused(false); }}
+                            className="w-full text-left px-3 py-2 rounded hover:bg-white/[0.05]"
+                          >
+                            <div className="text-sm text-[var(--color-text-main)]">{e.name || '—'}</div>
+                            <div className="text-xs text-[var(--color-text-muted)]">{e.email}</div>
+                          </button>
+                        ))}
+                        {mgmtSuggestions.length === 0 && (
+                          <div className="px-3 py-2 text-xs text-[var(--color-text-muted)]">No matching employees.</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Role */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-xs font-medium text-[var(--color-text-muted)]">Role</label>
+                <select value={mgmtRole} onChange={(e) => setMgmtRole(e.target.value)} className={inputCls}>
+                  {ROLE_OPTIONS.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+                </select>
+              </div>
+
+              {/* Department — only a team leader is tied to a department. */}
+              {mgmtRole === 'team_leader' && (
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-[var(--color-text-muted)]">Department</label>
+                  <select value={mgmtDept} onChange={(e) => setMgmtDept(e.target.value)} className={inputCls}>
+                    <option value="">— select department —</option>
+                    {deptOptions.map((d) => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </div>
+              )}
+
+              {mgmtError && <p className="text-sm text-[var(--color-red)]">{mgmtError}</p>}
+
+              <div className="flex gap-2 justify-end pt-1">
+                <button type="button" onClick={closeMgmt} className="btn-outline py-2 px-4 text-sm">Cancel</button>
+                <button type="submit" disabled={mgmtSaving} className="btn-primary py-2 px-5 text-sm disabled:opacity-50">
+                  {mgmtSaving ? 'Saving…' : 'Assign role'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       <div className="card flex flex-wrap items-center gap-3">
-        <input
-          type="text"
-          placeholder="Search by name or email…"
-          value={search}
-          onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          className="flex-1 min-w-[200px] bg-[var(--color-card-bg)] border border-[var(--color-card-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text-main)] focus:outline-none focus:border-[var(--color-purple)]"
-        />
+        {view !== 'management' && (
+          <input
+            type="text"
+            placeholder="Search by name or email…"
+            value={search}
+            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            className="flex-1 min-w-[200px] bg-[var(--color-card-bg)] border border-[var(--color-card-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text-main)] focus:outline-none focus:border-[var(--color-purple)]"
+          />
+        )}
         <div className="flex gap-2">
           <button onClick={() => setView('list')} className={`px-3 py-2 rounded-lg text-xs font-semibold ${view === 'list' ? 'bg-[rgba(150,150,150,0.15)] text-[var(--color-purple)] border border-[var(--color-purple)]' : 'btn-outline'}`}>List</button>
           <button onClick={() => setView('grid')} className={`px-3 py-2 rounded-lg text-xs font-semibold ${view === 'grid' ? 'bg-[rgba(150,150,150,0.15)] text-[var(--color-purple)] border border-[var(--color-purple)]' : 'btn-outline'}`}>Grid</button>
           <button onClick={() => setView('department')} className={`px-3 py-2 rounded-lg text-xs font-semibold ${view === 'department' ? 'bg-[rgba(150,150,150,0.15)] text-[var(--color-purple)] border border-[var(--color-purple)]' : 'btn-outline'}`}>Department</button>
+          {isAdmin && <button onClick={() => setView('management')} className={`px-3 py-2 rounded-lg text-xs font-semibold ${view === 'management' ? 'bg-[rgba(150,150,150,0.15)] text-[var(--color-purple)] border border-[var(--color-purple)]' : 'btn-outline'}`}>Management</button>}
         </div>
-        <select
-          value={pageSize}
-          onChange={(e) => { setPageSize(parseInt(e.target.value)); setPage(1); }}
-          className="bg-[var(--color-card-bg)] border border-[var(--color-card-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text-main)]"
-        >
-          {PAGE_SIZES.map((s) => <option key={s} value={s}>{s} / page</option>)}
-        </select>
+        {view !== 'management' && (
+          <select
+            value={pageSize}
+            onChange={(e) => { setPageSize(parseInt(e.target.value)); setPage(1); }}
+            className="bg-[var(--color-card-bg)] border border-[var(--color-card-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text-main)]"
+          >
+            {PAGE_SIZES.map((s) => <option key={s} value={s}>{s} / page</option>)}
+          </select>
+        )}
       </div>
 
       {loading && !rows.length && <div className="card text-[var(--color-text-muted)] text-sm">Loading…</div>}
 
-      {view === 'list' ? (
+      {view === 'management' ? (
+        <div className="card overflow-hidden p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[var(--color-text-muted)] text-[11px] uppercase tracking-wider border-b border-[var(--color-card-border)]">
+                  <th className="py-3 px-5 font-medium">Employee</th>
+                  <th className="py-3 px-5 font-medium">Department</th>
+                  <th className="py-3 px-5 font-medium">Role</th>
+                  <th className="py-3 px-5 font-medium text-right">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {roleRows.map((r) => (
+                  <tr key={r.key} className="border-t border-[var(--color-card-border)] hover:bg-white/[0.03]">
+                    <td className="py-3.5 px-5 text-[var(--color-text-main)] font-medium">{r.employee}</td>
+                    <td className="py-3.5 px-5 text-[var(--color-text-muted)]">{r.department}</td>
+                    <td className="py-3.5 px-5">
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${r.kind === 'it' ? 'bg-[rgba(56,189,248,0.15)] text-[var(--color-blue)]' : 'bg-[rgba(124,58,237,0.15)] text-[var(--color-purple)]'}`}>{r.role}</span>
+                    </td>
+                    <td className="py-3.5 px-5 text-right">
+                      <button onClick={() => revokeMgmt(r)} disabled={busyKey === r.key} className="btn-outline py-1 px-3 text-xs text-[var(--color-red)] disabled:opacity-50">
+                        {busyKey === r.key ? '…' : 'Remove'}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {!loading && roleRows.length === 0 && (
+                  <tr><td colSpan={4} className="py-12 text-center text-[var(--color-text-muted)]">No management roles yet. Use “+ Add Management”.</td></tr>
+                )}
+                {loading && (
+                  <tr><td colSpan={4} className="py-12 text-center text-[var(--color-text-muted)]">Loading…</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : view === 'list' ? (
         <div className="card overflow-hidden p-0">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -351,7 +594,7 @@ export default function EmployeesPanel() {
           </div>
         </div>
       ) : view === 'grid' ? (
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {pageRows.map((e) => empCard(e))}
           {!loading && pageRows.length === 0 && (
             <div className="col-span-full text-center text-[var(--color-text-muted)] py-8">No employees found.</div>
@@ -367,7 +610,7 @@ export default function EmployeesPanel() {
                   {g.emps.length} {g.emps.length === 1 ? 'person' : 'people'}
                 </span>
               </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 {g.emps.map((e) => empCard(e))}
               </div>
             </div>

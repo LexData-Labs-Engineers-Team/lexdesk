@@ -3,11 +3,13 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node server.mjs",
+    "dev:next-only": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node server.mjs --prod",
     "lint": "eslint",
-    "race:server": "node race-server/server.mjs"
+    "race:server": "node race-server/server.mjs",
+    "race:test": "node race-server/lifecycle-test.mjs"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "0.10.35",

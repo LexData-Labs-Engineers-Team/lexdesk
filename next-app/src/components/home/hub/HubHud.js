@@ -302,13 +302,24 @@ function PulsePanel({ station, onBack }) {
 function RacePanel({ station, onBack, onEnterRace }) {
   const [arena, setArena] = useState(undefined); // undefined = probing, null = offline
 
-  // Probe the race server so the panel can show who's already on the grid.
+  // Probe the race server so the panel can show who's already on the grid —
+  // and keep probing while the panel is open, so "2 pilots in the arena"
+  // tracks reality instead of the moment the panel mounted.
   useEffect(() => {
     let on = true;
-    import('../race/raceNet').then(({ peekArena }) =>
-      peekArena().then((info) => { if (on) setArena(info); })
-    );
-    return () => { on = false; };
+    let timer;
+    const probe = () => {
+      import('../race/raceNet')
+        .then(({ peekArena }) => peekArena())
+        .then((info) => {
+          if (!on) return;
+          setArena(info);
+          timer = setTimeout(probe, 5000);
+        })
+        .catch(() => { if (on) setArena(null); });
+    };
+    probe();
+    return () => { on = false; clearTimeout(timer); };
   }, []);
 
   return (
@@ -327,13 +338,13 @@ function RacePanel({ station, onBack, onEnterRace }) {
           {arena === undefined
             ? 'Reaching the arena…'
             : arena
-              ? arena.pilots > 0
-                ? `${arena.pilots} pilot${arena.pilots === 1 ? '' : 's'} in the arena${arena.phase === 'racing' ? ' — race in progress' : ''}`
-                : 'Arena online — grid is empty'
-              : 'Arena offline — race server not running'}
+              ? arena.humans > 0
+                ? `${arena.humans} pilot${arena.humans === 1 ? '' : 's'}${arena.bots > 0 ? ` + ${arena.bots} AI` : ''} in the arena${arena.phase === 'racing' ? ' — race in progress' : ''}`
+                : 'Arena online — AI pilots warm up the grid'
+              : 'Arena offline — solo practice vs AI available'}
         </div>
         <button type="button" className="btn-primary inline-flex px-7 py-3.5 text-[0.95rem]" onClick={onEnterRace}>
-          Enter the arena
+          {arena === null ? 'Enter practice' : 'Enter the arena'}
         </button>
       </div>
     </HudCard>

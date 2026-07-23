@@ -11,6 +11,7 @@ import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
 import RaceScene from './RaceScene';
 import { RaceNet } from './raceNet';
+import { createLocalNet } from './localArena';
 import { RaceLobby, Countdown, RaceStrip, StandingsRail, TelemetryBars, TrackMap, Podium, FinishBanner, LapTimer, FinalLapFlash } from './RaceHUD';
 import Joystick from '../hub/Joystick';
 import { audio } from '../hub/audio';
@@ -20,6 +21,7 @@ const SEND_MS = 85; // ~12 Hz state uplink, matches the server's snapshot tick
 function loadIdentity() {
   let name = null;
   let hue = null;
+  let rk = null;
   try {
     name = localStorage.getItem('teamos_callsign');
     const h = localStorage.getItem('teamos_pilot_hue');
@@ -28,13 +30,24 @@ function loadIdentity() {
       const u = JSON.parse(localStorage.getItem('user') || 'null');
       if (u?.name) name = String(u.name).trim().split(/\s+/)[0].slice(0, 14);
     }
+    // Per-tab resume key: lets the server give us our seat back after a
+    // mid-race disconnect instead of demoting us to spectator.
+    rk = sessionStorage.getItem('teamos_race_rk');
+    if (!rk) {
+      rk = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 10);
+      sessionStorage.setItem('teamos_race_rk', rk);
+    }
   } catch {}
   if (!name) name = `PILOT-${100 + Math.floor(Math.random() * 900)}`;
   if (hue === null || Number.isNaN(hue)) hue = [0, 32, 58, 132, 174, 204, 262, 318][Math.floor(Math.random() * 8)];
-  return { name, hue };
+  return { name, hue, rk };
 }
 
 export default function RaceExperience({ onExit, lowPerf = false, touch = false }) {
+  // 'online' rides a RaceNet websocket to the shared arena; 'practice' runs the
+  // same engine in-page against AI pilots (no server needed). The ref object is
+  // stable across the swap so scene/HUD children never re-bind.
+  const [mode, setMode] = useState('online');
   const netRef = useRef(null);
   if (!netRef.current) netRef.current = new RaceNet();
 
@@ -61,6 +74,11 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
   const [muted, setMuted] = useState(audio.isMuted());
 
   const playersRef = useRef(new Map()); // remote id -> interpolation record
+  // Event-time mirrors of selfId/players: message handlers read + write these
+  // directly so roster math never happens inside a setState updater (updaters
+  // must be pure — StrictMode double-runs them, which double-fired syncRecs).
+  const selfIdRef = useRef(null);
+  const playersListRef = useRef([]);
   const shipStateRef = useRef(null);    // latest local ship state (scene → net)
   const telemetryRef = useRef({
     speed01: 0, energy: 1, boost: false, slip: false, off: false, wrong: false,
@@ -97,53 +115,83 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
 
   /* ------------------------------------------------------------ networking */
   useEffect(() => {
+    // Swap transports when the mode flips; re-wire handlers either way.
+    const wantLocal = mode === 'practice';
+    if (!!netRef.current?.isLocal !== wantLocal) {
+      netRef.current?.close();
+      netRef.current = wantLocal ? createLocalNet() : new RaceNet();
+    }
     const net = netRef.current;
+    // A fresh transport means a fresh room: drop everything learned from the
+    // previous one so ghosts of the other arena never leak across.
+    setConn('connecting');
+    setSelfId(null);
+    setPlayers([]);
+    setPhase('lobby');
+    setCountdownEndsAt(null);
+    setStartAt(null);
+    setGrid([]);
+    setResults(null);
+    setStandings([]);
+    setMyPlace(null);
+    playersRef.current.clear();
+    selfIdRef.current = null;
+    playersListRef.current = [];
+    setFleetVersion((v) => v + 1);
+    everOpenRef.current = false;
+    // Single entry point for roster changes: update the event-time mirror,
+    // hand React the same list, and sync interpolation records — all outside
+    // any state updater, so it stays pure under StrictMode.
+    const applyRoster = (list) => {
+      playersListRef.current = list;
+      setPlayers(list);
+      syncRecs(list, selfIdRef.current);
+    };
+    // The server may have adjusted our callsign (dedup vs a teammate with the
+    // same name) — mirror what it actually calls us, without persisting.
+    const reconcileName = (row) => {
+      if (row && row.name && row.name !== identityRef.current.name) {
+        identityRef.current.name = row.name;
+        setCallsign(row.name);
+      }
+    };
     const offs = [
       net.on('status', (s) => {
         if (s === 'open') {
           everOpenRef.current = true;
           setConn('open');
-          net.send({ t: 'hello', name: identityRef.current.name, hue: identityRef.current.hue });
+          net.send({ t: 'hello', name: identityRef.current.name, hue: identityRef.current.hue, rk: identity.rk });
         } else if (s === 'closed') {
           setConn('lost');
+        } else if (s === 'reconnecting') {
+          setConn('reconnecting');
         }
       }),
       net.on('welcome', (m) => {
+        selfIdRef.current = m.id;
         setSelfId(m.id);
-        setPlayers(m.players);
         setPhase(m.phase);
         setCountdownEndsAt(m.countdownEndsAt);
         setStartAt(m.startAt);
         setSeed(m.seed);
         setGrid(m.grid || []);
         setResults(m.results);
-        syncRecs(m.players, m.id);
+        applyRoster(m.players);
+        reconcileName(m.players.find((p) => p.id === m.id));
       }),
       net.on('join', (m) => {
-        setPlayers((ps) => {
-          const next = [...ps.filter((p) => p.id !== m.player.id), m.player];
-          setSelfId((self) => { syncRecs(next, self); return self; });
-          return next;
-        });
+        applyRoster([...playersListRef.current.filter((p) => p.id !== m.player.id), m.player]);
         audio.blip();
       }),
       net.on('leave', (m) => {
-        setPlayers((ps) => {
-          const next = ps.filter((p) => p.id !== m.id);
-          setSelfId((self) => { syncRecs(next, self); return self; });
-          return next;
-        });
+        applyRoster(playersListRef.current.filter((p) => p.id !== m.id));
       }),
       net.on('player', (m) => {
-        setPlayers((ps) => {
-          const next = ps.map((p) => (p.id === m.player.id ? m.player : p));
-          setSelfId((self) => { syncRecs(next, self); return self; });
-          return next;
-        });
+        applyRoster(playersListRef.current.map((p) => (p.id === m.player.id ? m.player : p)));
+        if (m.player.id === selfIdRef.current) reconcileName(m.player);
       }),
       net.on('roster', (m) => {
-        setPlayers(m.players);
-        setSelfId((self) => { syncRecs(m.players, self); return self; });
+        applyRoster(m.players);
       }),
       net.on('phase', (m) => {
         setPhase(m.phase);
@@ -170,10 +218,7 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
       }),
       net.on('standings', (m) => setStandings(m.rows)),
       net.on('finished', (m) => {
-        setSelfId((self) => {
-          if (m.id === self) setMyPlace(m.place);
-          return self;
-        });
+        if (m.id === selfIdRef.current) setMyPlace(m.place);
       }),
     ];
     net.connect();
@@ -181,9 +226,9 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
       offs.forEach((off) => off());
       net.close();
     };
-    // connect once per mount; callsign/hue updates flow via 'profile' messages
+    // reconnects once per mode; callsign/hue updates flow via 'profile' messages
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [mode]);
 
   /* ------------------------------------------------------- state uplink */
   useEffect(() => {
@@ -287,6 +332,7 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
           <span className="hub-brand__mark">T</span>
           <span className="hub-brand__name">TeamOS</span>
           <span className="race-brand-tag">GRAND PRIX</span>
+          {mode === 'practice' && <span className="race-brand-tag is-practice">PRACTICE · AI</span>}
         </button>
         <div className="hub-topbar__right">
           <button type="button" className="hub-icon-btn" onClick={toggleMute} aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute' : 'Mute'}>
@@ -296,6 +342,11 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M11 5 6 9H2v6h4l5 4z" /><path d="M15.54 8.46a5 5 0 0 1 0 7.07" /><path d="M19.07 4.93a10 10 0 0 1 0 14.14" /></svg>
             )}
           </button>
+          {mode === 'practice' && (
+            <button type="button" className="hub-ghost" onClick={() => setMode('online')} title="Try the live multiplayer arena">
+              Go online
+            </button>
+          )}
           <button type="button" className="hub-ghost" onClick={onExit}>Leave arena</button>
         </div>
       </header>
@@ -310,16 +361,28 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
                 <h2 className="race-conn__title">Linking to the grid…</h2>
                 <p className="race-conn__sub">Contacting the race server.</p>
               </>
+            ) : conn === 'reconnecting' ? (
+              <>
+                <h2 className="race-conn__title">Link lost — rejoining…</h2>
+                <p className="race-conn__sub">The race link dropped. Reconnecting automatically.</p>
+                <div className="race-conn__actions">
+                  <button type="button" className="hub-ghost" onClick={() => setMode('practice')}>Race the AI instead</button>
+                  <button type="button" className="hub-ghost" onClick={onExit}>Back to hub</button>
+                </div>
+              </>
             ) : (
               <>
                 <h2 className="race-conn__title">{everOpenRef.current ? 'Link lost' : 'Arena offline'}</h2>
                 <p className="race-conn__sub">
                   {everOpenRef.current
-                    ? 'The connection to the race server dropped.'
-                    : 'The race server isn’t reachable. Start it with npm run race:server, then retry.'}
+                    ? 'The connection to the race server dropped and retries ran out.'
+                    : 'No race server is reachable from here — but the AI grid is always open.'}
                 </p>
                 <div className="race-conn__actions">
-                  <button type="button" className="btn-primary px-6 py-2.5 text-[0.9rem]" onClick={retry}>Retry</button>
+                  <button type="button" className="btn-primary px-6 py-2.5 text-[0.9rem]" onClick={() => setMode('practice')}>
+                    Race the AI
+                  </button>
+                  <button type="button" className="hub-ghost" onClick={retry}>Retry online</button>
                   <button type="button" className="hub-ghost" onClick={onExit}>Back to hub</button>
                 </div>
               </>
@@ -353,7 +416,7 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
           <RaceStrip standings={standings} selfId={selfId} telemetryRef={telemetryRef} />
           <StandingsRail standings={standings} players={players} selfId={selfId} />
           <TelemetryBars telemetryRef={telemetryRef} />
-          <TrackMap playersRef={playersRef} shipStateRef={shipStateRef} selfId={selfId} selfHue={hue} />
+          <TrackMap playersRef={playersRef} shipStateRef={shipStateRef} selfId={selfId} selfHue={hue} telemetryRef={telemetryRef} />
           <LapTimer telemetryRef={telemetryRef} />
           <FinalLapFlash telemetryRef={telemetryRef} />
           {myPlace && !results && <FinishBanner place={myPlace} />}

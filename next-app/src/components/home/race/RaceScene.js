@@ -13,7 +13,7 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { Environment, Lightformer, Html, Trail, Grid } from '@react-three/drei';
 import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing';
 import { ChromaticAberrationEffect } from 'postprocessing';
-import { getTrack, genObstacles, nearestSample, gridSlot, GATE_COUNT, LAPS, CORRIDOR, GATE_RADIUS } from './trackData';
+import { getTrack, genObstacles, nearestSample, gridSlot, GATE_COUNT, LAPS, CORRIDOR, GATE_RADIUS } from './trackData.mjs';
 import { audio } from '../hub/audio';
 
 const smooth = (delta, rate = 3.2) => 1 - Math.exp(-rate * delta);
@@ -33,7 +33,10 @@ export const pilotColor = (hue, l = 0.62) => new THREE.Color().setHSL(((hue % 36
 /* ------------------------------------------------------------- ship visual */
 // The hub's ship silhouette, re-cut for racing: white hull, but wings, engine
 // and trail carry the pilot's hue — the only color in the arena is people.
-function RaceShipMesh({ hue, glowRef, trailLength = 7 }) {
+// `lit` — whether this ship carries its own pointLight. The local pilot always
+// does; remote ships drop theirs on lowPerf rigs, where 6-8 extra dynamic
+// lights against MeshStandardMaterials is the difference between 60 and 25 fps.
+function RaceShipMesh({ hue, glowRef, trailLength = 7, lit = true }) {
   const accent = useMemo(() => pilotColor(hue), [hue]);
   const accentBright = useMemo(() => pilotColor(hue, 0.72), [hue]);
   return (
@@ -68,7 +71,7 @@ function RaceShipMesh({ hue, glowRef, trailLength = 7 }) {
           <meshBasicMaterial color={accentBright} />
         </mesh>
       </Trail>
-      <pointLight position={[0, 0.1, -0.85]} color={accentBright} intensity={6} distance={7} />
+      {lit && <pointLight position={[0, 0.1, -0.85]} color={accentBright} intensity={6} distance={7} />}
     </group>
   );
 }
@@ -383,9 +386,13 @@ function Burst({ fx }) {
 }
 
 /* ------------------------------------------------------------ remote ships */
-function RemoteShip({ rec, netRef }) {
+function RemoteShip({ rec, netRef, lowPerf }) {
   const group = useRef();
   const glow = useRef();
+  // Mount the mesh only once the ship has a real position: drei's <Trail>
+  // samples its target even while an ancestor is invisible, so mounting at the
+  // origin pre-snapshot painted a full-arena streak on the ship's first frame.
+  const [placed, setPlaced] = useState(!!rec.placed);
   useFrame((_, delta) => {
     const g = group.current;
     if (!g) return;
@@ -426,6 +433,7 @@ function RemoteShip({ rec, netRef }) {
       g.position.set(x, y, z);
       g.rotation.y = h;
       rec.placed = true;
+      setPlaced(true);
     } else {
       // One more smoothing layer hides snapshot-boundary corners.
       g.position.x = THREE.MathUtils.damp(g.position.x, x, 18, delta);
@@ -441,24 +449,28 @@ function RemoteShip({ rec, netRef }) {
   });
   return (
     <group ref={group}>
-      <RaceShipMesh hue={rec.hue} glowRef={glow} trailLength={5} />
-      <Html center distanceFactor={26} position={[0, 1.5, 0]} zIndexRange={[30, 0]}>
-        <div className="race-nametag" style={{ '--pilot': `hsl(${rec.hue} 85% 65%)` }}>
-          <span className="race-nametag__dot" />
-          {rec.name}
-        </div>
-      </Html>
+      {placed && (
+        <>
+          <RaceShipMesh hue={rec.hue} glowRef={glow} trailLength={5} lit={!lowPerf} />
+          <Html center distanceFactor={26} position={[0, 1.5, 0]} zIndexRange={[30, 0]}>
+            <div className="race-nametag" style={{ '--pilot': `hsl(${rec.hue} 85% 65%)` }}>
+              <span className="race-nametag__dot" />
+              {rec.name}
+            </div>
+          </Html>
+        </>
+      )}
     </group>
   );
 }
 
-function RemoteFleet({ playersRef, fleetVersion, netRef }) {
+function RemoteFleet({ playersRef, fleetVersion, netRef, lowPerf }) {
   // fleetVersion bumps when membership changes; positions flow through refs.
   void fleetVersion;
   const recs = [...playersRef.current.values()];
   return (
     <group>
-      {recs.map((rec) => <RemoteShip key={rec.id} rec={rec} netRef={netRef} />)}
+      {recs.map((rec) => <RemoteShip key={rec.id} rec={rec} netRef={netRef} lowPerf={lowPerf} />)}
     </group>
   );
 }
@@ -593,6 +605,13 @@ function ArenaBackdrop({ lowPerf }) {
 function SpectatorRig({ playersRef }) {
   const { camera } = useThree();
   const look = useRef(new THREE.Vector3(0, 10, 0));
+  // LocalPilot stretches fov with speed and never gets a chance to undo it
+  // when we take over mid-session — reset to the arena default or the orbit
+  // renders with a stuck boost-fisheye.
+  useEffect(() => {
+    camera.fov = 55;
+    camera.updateProjectionMatrix();
+  }, [camera]);
   useFrame((st, delta) => {
     const t = st.clock.elapsedTime * 0.07;
     camera.position.lerp(
@@ -646,13 +665,17 @@ function LocalPilot({
 
   // Keyboard — same bindings as the hub, plus R to respawn.
   useEffect(() => {
+    const typing = (e) => {
+      const t = e.target;
+      return t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable);
+    };
     const down = (e) => {
-      if (!e.key) return;
+      if (!e.key || typing(e)) return; // editing the callsign must not steer the ship
       const k = e.key.toLowerCase();
       if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(k)) e.preventDefault();
       keys.current[k] = true;
     };
-    const up = (e) => { if (e.key) keys.current[e.key.toLowerCase()] = false; };
+    const up = (e) => { if (e.key && !typing(e)) keys.current[e.key.toLowerCase()] = false; };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     return () => {
@@ -707,7 +730,10 @@ function LocalPilot({
   }, []);
 
   useFrame((st, delta) => {
-    const dt = Math.min(delta, 0.05);
+    // Clamp integration to 0.1s: guards against huge post-stall steps while
+    // keeping the sim real-time down to 10 FPS. (A 0.05 clamp made sub-20-FPS
+    // machines race in slow motion vs. the wall-clock standings — unfair.)
+    const dt = Math.min(delta, 0.1);
     const k = keys.current;
     const serverNow = netRef.current?.serverNow() ?? Date.now();
     const preLaunch = phase === 'racing' && startAt && serverNow < startAt;
@@ -862,6 +888,10 @@ function LocalPilot({
       frac = THREE.MathUtils.clamp(1 - dist / seg, 0, 0.999);
       if (dist < GATE_RADIUS) {
         d.passed += 1;
+        // We're AT the new segment's start now — reset the fraction, or prog
+        // momentarily reads ~a full gate ahead (passed+1 plus the old ~1.0
+        // frac) and the standings jitter at every crossing.
+        frac = 0;
         d.respawnGate = d.next;
         const crossedLine = d.next === 0;
         d.next = (d.next + 1) % GATE_COUNT;
@@ -1011,7 +1041,9 @@ function RaceEffects({ telemetryRef }) {
     chroma.offset.y = THREE.MathUtils.damp(chroma.offset.y, target * 0.6, 4, delta);
   });
   return (
-    <EffectComposer multisampling={4}>
+    // MSAA 2 not 4: bloom's mipmap blur already eats most edge shimmer, and
+    // halving the composer's sample count buys real frame time on mid GPUs.
+    <EffectComposer multisampling={2}>
       <Bloom intensity={1.35} luminanceThreshold={0.18} luminanceSmoothing={0.32} mipmapBlur radius={0.88} />
       <primitive object={chroma} />
       <Vignette offset={0.28} darkness={0.92} />
@@ -1025,7 +1057,11 @@ export default function RaceScene({
   playersRef, fleetVersion, shipStateRef, telemetryRef, netRef,
   selfHue, onGate, onFinish,
 }) {
-  const obstacles = useMemo(() => genObstacles(seed || 1, lowPerf ? 28 : 54), [seed, lowPerf]);
+  // Every client must generate the SAME field from the seed — obstacle count is
+  // part of the shared-track contract (a lowPerf rival with fewer rocks would
+  // fly through asteroids everyone else has to dodge). lowPerf economizes on
+  // rendering (instanced, 2 draw calls) — never on the layout.
+  const obstacles = useMemo(() => genObstacles(seed || 1, 54), [seed]);
   const gateStateRef = useRef({ next: -1, finished: false });
   const padFxRef = useRef({});
   const fxRef = useRef([]);
@@ -1070,7 +1106,7 @@ export default function RaceScene({
       <BoostPads padFxRef={padFxRef} />
       <ObstacleField obstacles={obstacles} />
       <ImpactBursts fxRef={fxRef} />
-      <RemoteFleet playersRef={playersRef} fleetVersion={fleetVersion} netRef={netRef} />
+      <RemoteFleet playersRef={playersRef} fleetVersion={fleetVersion} netRef={netRef} lowPerf={lowPerf} />
 
       {spectating ? (
         <SpectatorRig playersRef={playersRef} />

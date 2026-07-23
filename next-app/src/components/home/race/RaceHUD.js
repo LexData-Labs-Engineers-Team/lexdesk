@@ -7,11 +7,11 @@
 // zero-re-render pattern the hub's radar uses.
 
 import { useEffect, useRef, useState } from 'react';
-import { getTrack, GATE_COUNT, LAPS } from './trackData';
+import { getTrack, GATE_COUNT, LAPS } from './trackData.mjs';
 
 /* The rulebook — shown on every grid, so nobody launches blind. */
 export const RULES = [
-  ['Grid', 'The race arms once 2 pilots are on the grid — it will not start solo.'],
+  ['Grid', 'The race arms at 2 pilots. AI rivals top up the field, so you are never stuck waiting — teammates who join take their slots.'],
   ['Course', `${LAPS} laps of the Nebula Circuit. Thread all ${GATE_COUNT} gates in order — the bright ring is always your next one.`],
   ['Contact', 'Bumping rivals is legal. Both ships scrub speed — use it wisely.'],
   ['Asteroids', 'Rocks on the racing line kill your pace. Thread or lose.'],
@@ -169,15 +169,20 @@ export function RaceLobby({
                   <span className="race-roster__name">
                     {p.name}
                     {p.id === selfId && <em> · you</em>}
+                    {p.bot && <span className="race-tag-ai" aria-label="AI pilot">AI</span>}
                   </span>
                   {p.spectator
                     ? <span className="race-roster__tag">next race</span>
                     : <span className={`race-roster__ready${p.ready ? ' is-on' : ''}`}>{p.ready ? 'READY' : 'waiting'}</span>}
                 </li>
               ))}
-              {players.length === 1 && (
+              {players.filter((p) => !p.bot).length === 1 && (
                 <li className="race-roster__row is-empty">
-                  <span className="race-roster__name">Open slot — share the page, race a teammate</span>
+                  <span className="race-roster__name">
+                    {players.some((p) => p.bot)
+                      ? 'Share the page — teammates who join race in place of the AI'
+                      : 'Open slot — share the page, race a teammate'}
+                  </span>
                 </li>
               )}
             </ul>
@@ -338,14 +343,16 @@ export function FinalLapFlash({ telemetryRef }) {
 
 /* --------------------------------------------------------- standings rail */
 export function StandingsRail({ standings, players, selfId }) {
-  if (!standings.length) return null;
   const byId = Object.fromEntries(players.map((p) => [p.id, p]));
-  const leader = standings[0]?.prog ?? 0;
+  // Drop rows for departed pilots BEFORE slicing/numbering, or the ladder
+  // renders with position gaps (1, 2, 4 …) until the server's next tick.
+  const rows = standings.filter((r) => byId[r.id]);
+  if (!rows.length) return null;
+  const leader = rows[0]?.prog ?? 0;
   return (
     <ol className="race-ladder" aria-label="Live standings">
-      {standings.slice(0, 8).map((r, i) => {
+      {rows.slice(0, 8).map((r, i) => {
         const p = byId[r.id];
-        if (!p) return null;
         const behind = Math.max(0, leader - r.prog);
         // "leader" for P1 or anyone level with it (the whole pre-GO grid sits at
         // prog 0) — avoids the nonsensical "-0.0 gates" readout.
@@ -358,7 +365,7 @@ export function StandingsRail({ standings, players, selfId }) {
           >
             <span className="race-ladder__pos">{i + 1}</span>
             <span className="race-ladder__dot" />
-            <span className="race-ladder__name">{p.name}</span>
+            <span className="race-ladder__name">{p.name}{p.bot && <span className="race-tag-ai">AI</span>}</span>
             <span className="race-ladder__gap">{gap}</span>
           </li>
         );
@@ -426,13 +433,24 @@ export function TelemetryBars({ telemetryRef }) {
 }
 
 /* ---------------------------------------------------------------- minimap */
-export function TrackMap({ playersRef, shipStateRef, selfId, selfHue }) {
+export function TrackMap({ playersRef, shipStateRef, selfId, selfHue, telemetryRef }) {
   const dotsRef = useRef(null);
+  const gatesRef = useRef(null);
   const fit = useRef(getMapFit());
 
   useEffect(() => {
     let raf;
     const tick = () => {
+      // Pulse the pilot's NEXT gate so the circuit reads at a glance.
+      // (Spectator maps don't pass telemetryRef — no false highlight.)
+      const gatesHost = gatesRef.current;
+      if (gatesHost && telemetryRef) {
+        const next = telemetryRef.current.finished ? -1 : telemetryRef.current.gate;
+        const els = gatesHost.children;
+        for (let gi = 0; gi < els.length; gi++) {
+          els[gi].classList.toggle('is-next', gi === next);
+        }
+      }
       const host = dotsRef.current;
       if (host) {
         const recs = [...playersRef.current.values()];
@@ -469,15 +487,17 @@ export function TrackMap({ playersRef, shipStateRef, selfId, selfHue }) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playersRef, shipStateRef, selfHue, selfId]);
+  }, [playersRef, shipStateRef, selfHue, selfId, telemetryRef]);
 
   return (
     <div className="race-map" aria-hidden="true">
       <svg viewBox="0 0 120 120">
         <polygon points={fit.current.pts} className="race-map__track" />
-        {fit.current.gatePts.map((g) => (
-          <circle key={g.idx} cx={g.x} cy={g.y} r={g.idx === 0 ? 2.2 : 1.3} className={`race-map__gate${g.idx === 0 ? ' is-start' : ''}`} />
-        ))}
+        <g ref={gatesRef}>
+          {fit.current.gatePts.map((g) => (
+            <circle key={g.idx} cx={g.x} cy={g.y} r={g.idx === 0 ? 2.2 : 1.3} className={`race-map__gate${g.idx === 0 ? ' is-start' : ''}`} />
+          ))}
+        </g>
         <g ref={dotsRef} />
       </svg>
       <span className="race-map__label">CIRCUIT</span>
@@ -505,7 +525,7 @@ export function Podium({ results, selfId, onExit }) {
               <div key={`slot-${slot}`} className={`race-tier is-p${slot + 1}${r.id === selfId ? ' is-you' : ''}`} style={{ '--pilot': `hsl(${r.hue} 85% 62%)` }}>
                 <span className="race-tier__place">{ordinal(slot + 1)}</span>
                 <span className="race-tier__dot" />
-                <span className="race-tier__name">{r.name}</span>
+                <span className="race-tier__name">{r.name}{r.bot && <span className="race-tag-ai">AI</span>}</span>
                 <span className="race-tier__time">{fmtTime(r.timeMs)}</span>
               </div>
             );
@@ -518,6 +538,7 @@ export function Podium({ results, selfId, onExit }) {
                 <span>{r.dnf ? 'DNF' : ordinal(podium.length + i + 1)}</span>
                 <span className="race-tier__dot" />
                 {r.name}
+                {r.bot && <span className="race-tag-ai">AI</span>}
                 {!r.dnf && <em>{fmtTime(r.timeMs)}</em>}
               </li>
             ))}

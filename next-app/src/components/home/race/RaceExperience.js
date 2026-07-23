@@ -10,8 +10,11 @@ import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import * as THREE from 'three';
 import { Canvas } from '@react-three/fiber';
 import RaceScene from './RaceScene';
-import { RaceNet } from './raceNet';
+import { RaceNet, getRaceRoom } from './raceNet';
 import { createLocalNet } from './localArena';
+import { useGamepad } from './useGamepad';
+import { dealPickupKinds, TRACKS } from './trackData.mjs';
+import { apiFetch } from '../../../lib/apiFetch';
 import { RaceLobby, Countdown, RaceStrip, StandingsRail, TelemetryBars, TrackMap, Podium, FinishBanner, LapTimer, FinalLapFlash } from './RaceHUD';
 import Joystick from '../hub/Joystick';
 import { audio } from '../hub/audio';
@@ -65,13 +68,18 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
   const [countdownEndsAt, setCountdownEndsAt] = useState(null);
   const [startAt, setStartAt] = useState(null);
   const [seed, setSeed] = useState(1);
+  const [trackId, setTrackId] = useState(0);
   const [grid, setGrid] = useState([]);
   const [results, setResults] = useState(null);
   const [standings, setStandings] = useState([]);
   const [myPlace, setMyPlace] = useState(null);
+  const [photoGapMs, setPhotoGapMs] = useState(null);
+  const [feed, setFeed] = useState([]); // overtake toasts
+  const [autoTier, setAutoTier] = useState(0); // fps governor: 0 full → 2 minimal
   const [fleetVersion, setFleetVersion] = useState(0);
   const [warpIn, setWarpIn] = useState(true);
   const [muted, setMuted] = useState(audio.isMuted());
+  const [ghost, setGhost] = useState(null);
 
   const playersRef = useRef(new Map()); // remote id -> interpolation record
   // Event-time mirrors of selfId/players: message handlers read + write these
@@ -80,6 +88,15 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
   const selfIdRef = useRef(null);
   const playersListRef = useRef([]);
   const shipStateRef = useRef(null);    // latest local ship state (scene → net)
+  // Pickup pod truth: per-pod respawn timestamps (server clock) + dealt kinds.
+  const pickupsRef = useRef({ takenUntil: [], kinds: [] });
+  // Power events for the scene (grants + EMP shocks), drained per frame.
+  const powerRef = useRef({ queue: [] });
+  // Ghost lap recorder — frames of [x,y,z,h] at the uplink cadence, from GO.
+  const ghostRecRef = useRef({ startAt: null, frames: [], done: false });
+  const finishTimesRef = useRef(new Map()); // place -> timeMs (photo-finish gaps)
+  const prevOrderRef = useRef([]);          // last standings order (overtake feed)
+  const postedRef = useRef(null);           // startAt of the race we last reported
   const telemetryRef = useRef({
     speed01: 0, energy: 1, boost: false, slip: false, off: false, wrong: false,
     lap: 1, gate: 1, passed: 0, finished: false,
@@ -90,6 +107,28 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
   const me = players.find((p) => p.id === selfId);
   const spectating = !!me?.spectator;
   const gridIndex = grid.indexOf(selfId);
+
+  // Short-lived race toasts (overtakes, pickups) — capped at three on screen.
+  const feedKeyRef = useRef(0);
+  const pushFeed = useCallback((text, tone) => {
+    const key = ++feedKeyRef.current;
+    setFeed((f) => [...f.slice(-2), { key, text, tone }]);
+    setTimeout(() => setFeed((f) => f.filter((e) => e.key !== key)), 4000);
+  }, []);
+
+  // Persist the run as this circuit's ghost if it beats the stored best.
+  const saveGhostIfBest = useCallback((timeMs) => {
+    const rec = ghostRecRef.current;
+    if (!rec.frames.length || rec.done) return;
+    rec.done = true;
+    try {
+      const key = `teamos_ghost_t${rec.trackId ?? 0}`;
+      const prior = JSON.parse(localStorage.getItem(key) || 'null');
+      if (!prior || timeMs < prior.timeMs) {
+        localStorage.setItem(key, JSON.stringify({ v: 1, timeMs, dt: SEND_MS, frames: rec.frames }));
+      }
+    } catch {}
+  }, []);
 
   /* -------------------------------------------------- roster ↔ rec syncing */
   const syncRecs = useCallback((list, self) => {
@@ -134,9 +173,16 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
     setResults(null);
     setStandings([]);
     setMyPlace(null);
+    setPhotoGapMs(null);
+    setFeed([]);
     playersRef.current.clear();
     selfIdRef.current = null;
     playersListRef.current = [];
+    pickupsRef.current = { takenUntil: [], kinds: [] };
+    powerRef.current = { queue: [] };
+    ghostRecRef.current = { startAt: null, frames: [], done: false };
+    finishTimesRef.current = new Map();
+    prevOrderRef.current = [];
     setFleetVersion((v) => v + 1);
     everOpenRef.current = false;
     // Single entry point for roster changes: update the event-time mirror,
@@ -174,8 +220,11 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
         setCountdownEndsAt(m.countdownEndsAt);
         setStartAt(m.startAt);
         setSeed(m.seed);
+        setTrackId(m.trackId ?? 0);
         setGrid(m.grid || []);
         setResults(m.results);
+        pickupsRef.current.takenUntil = [...(m.pickups || [])];
+        pickupsRef.current.kinds = m.phase === 'racing' ? dealPickupKinds(m.seed, m.trackId ?? 0) : [];
         applyRoster(m.players);
         reconcileName(m.players.find((p) => p.id === m.id));
       }),
@@ -198,11 +247,25 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
         setCountdownEndsAt(m.countdownEndsAt);
         setStartAt(m.startAt);
         setSeed(m.seed);
+        setTrackId(m.trackId ?? 0);
         setGrid(m.grid || []);
         setResults(m.results);
+        pickupsRef.current.takenUntil = [...(m.pickups || [])];
         if (m.phase === 'racing') {
           setMyPlace(null);
+          setPhotoGapMs(null);
           setStandings([]);
+          setFeed([]);
+          pickupsRef.current.kinds = dealPickupKinds(m.seed, m.trackId ?? 0);
+          ghostRecRef.current = { startAt: m.startAt, frames: [], done: false, trackId: m.trackId ?? 0 };
+          finishTimesRef.current = new Map();
+          prevOrderRef.current = [];
+          // Load the personal-best ghost for this circuit (practice only —
+          // online grids race real rivals, not echoes).
+          try {
+            const raw = localStorage.getItem(`teamos_ghost_t${m.trackId ?? 0}`);
+            setGhost(raw ? JSON.parse(raw) : null);
+          } catch { setGhost(null); }
         }
         if (m.phase === 'results') audio.fanfare();
       }),
@@ -216,9 +279,52 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
           if (rec.buf.length > 4) rec.buf.shift();
         }
       }),
-      net.on('standings', (m) => setStandings(m.rows)),
+      net.on('standings', (m) => {
+        setStandings(m.rows);
+        // Overtake feed: compare my ladder position against the last tick.
+        const self = selfIdRef.current;
+        const order = m.rows.map((r) => r.id);
+        const prev = prevOrderRef.current;
+        prevOrderRef.current = order;
+        if (!self || !prev.length || !order.includes(self)) return;
+        const was = prev.indexOf(self);
+        const is = order.indexOf(self);
+        if (was === -1 || is === was) return;
+        const byId = Object.fromEntries(playersListRef.current.map((p) => [p.id, p]));
+        if (is < was) {
+          // moved up — name the highest-profile ship we cleared
+          const cleared = prev.filter((id, i) => i < was && order.indexOf(id) > is).map((id) => byId[id]?.name).filter(Boolean);
+          if (cleared.length) {
+            audio.overtake?.();
+            pushFeed(`Passed ${cleared[0]}${cleared.length > 1 ? ` +${cleared.length - 1}` : ''}`, 'up');
+          }
+        } else {
+          const taker = order.filter((id, i) => i < is && prev.indexOf(id) > was).map((id) => byId[id]?.name).filter(Boolean);
+          if (taker.length) {
+            audio.overtaken?.();
+            pushFeed(`${taker[0]} got by you`, 'down');
+          }
+        }
+      }),
+      net.on('pickupTaken', (m) => {
+        pickupsRef.current.takenUntil[m.idx] = m.until;
+        if (m.id === selfIdRef.current) {
+          powerRef.current.queue.push({ type: 'grant', kind: m.kind });
+          pushFeed(m.kind === 'shield' ? 'SHIELD armed' : m.kind === 'overcharge' ? 'OVERCHARGE' : 'EMP away', 'up');
+        }
+      }),
+      net.on('emp', (m) => {
+        if (m.id !== selfIdRef.current) powerRef.current.queue.push({ type: 'emp', x: m.x, z: m.z });
+      }),
       net.on('finished', (m) => {
-        if (m.id === selfIdRef.current) setMyPlace(m.place);
+        finishTimesRef.current.set(m.place, m.timeMs);
+        if (m.id === selfIdRef.current) {
+          setMyPlace(m.place);
+          // Photo finish: how close was the ship right ahead?
+          const ahead = finishTimesRef.current.get(m.place - 1);
+          if (ahead !== undefined && m.timeMs - ahead < 1000) setPhotoGapMs(m.timeMs - ahead);
+          saveGhostIfBest(m.timeMs);
+        }
       }),
     ];
     net.connect();
@@ -235,10 +341,52 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
     if (conn !== 'open' || spectating) return undefined;
     const t = setInterval(() => {
       const s = shipStateRef.current;
-      if (s) netRef.current.send({ t: 'state', ...s });
+      if (!s) return;
+      netRef.current.send({ t: 'state', ...s });
+      // Ghost recorder piggybacks the uplink cadence: frames from GO until the
+      // flag, quantized — a full 3-lap run stays well under 100 KB.
+      const rec = ghostRecRef.current;
+      if (
+        rec.startAt && !rec.done && rec.frames.length < 6000 &&
+        !telemetryRef.current.finished &&
+        (netRef.current.serverNow?.() ?? Date.now()) >= rec.startAt
+      ) {
+        rec.frames.push([
+          Math.round(s.x * 100) / 100,
+          Math.round(s.y * 100) / 100,
+          Math.round(s.z * 100) / 100,
+          Math.round(s.h * 1000) / 1000,
+        ]);
+      }
     }, SEND_MS);
     return () => clearInterval(t);
   }, [conn, spectating]);
+
+  /* ----------------------------------------------- gamepad + season report */
+  const control = useRef({ thrust: 0, turn: 0, boost: false });
+  useGamepad(control);
+
+  // Report finished online races to the office leaderboard (fire-and-forget).
+  useEffect(() => {
+    if (phase !== 'results' || mode !== 'online' || !results || postedRef.current === startAt) return;
+    const r = results.find((row) => row.id === selfId && !row.bot);
+    if (!r || r.dnf || !r.place) return;
+    postedRef.current = startAt;
+    let token = null;
+    try { token = localStorage.getItem('token'); } catch {}
+    apiFetch('/api/race/result', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      body: JSON.stringify({
+        trackId,
+        place: r.place,
+        timeMs: r.timeMs,
+        bestLapMs: telemetryRef.current.bestLapMs || null,
+        humans: results.filter((row) => !row.bot).length,
+        callsign: identityRef.current.name,
+      }),
+    }).catch(() => {});
+  }, [phase, mode, results, selfId, startAt, trackId]);
 
   /* ---------------------------------------------------------- audio bed */
   // The ambient drone + engine are shared singletons owned by the hub. We make
@@ -276,6 +424,11 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
     netRef.current.send({ t: 'ready', on });
   }, []);
 
+  const handleVote = useCallback((track) => {
+    audio.blip();
+    netRef.current.send({ t: 'vote', track });
+  }, []);
+
   const handleFinish = useCallback(() => {
     audio.fanfare();
     netRef.current.send({ t: 'finish' });
@@ -293,15 +446,15 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
     netRef.current.connect();
   };
 
-  const control = useRef({ thrust: 0, turn: 0, boost: false });
   const inLobby = phase === 'lobby' || phase === 'armed';
   const racing = phase === 'racing';
+  const room = getRaceRoom();
 
   return (
     <div className="hub-root race-root">
       <Canvas
         className="hub-canvas"
-        dpr={lowPerf ? [1, 1.25] : [1, 1.5]}
+        dpr={autoTier >= 2 ? 1 : autoTier === 1 || lowPerf ? [1, 1.25] : [1, 1.5]}
         gl={{ antialias: !lowPerf, alpha: false, powerPreference: 'high-performance' }}
         camera={{ position: [0, 8, -30], fov: 55 }}
       >
@@ -310,6 +463,7 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
             phase={phase}
             startAt={startAt}
             seed={seed}
+            trackId={trackId}
             gridIndex={gridIndex}
             spectating={spectating && racing}
             lowPerf={lowPerf}
@@ -320,6 +474,11 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
             telemetryRef={telemetryRef}
             netRef={netRef}
             selfHue={hue}
+            pickupsRef={pickupsRef}
+            powerRef={powerRef}
+            ghost={mode === 'practice' ? ghost : null}
+            autoTier={autoTier}
+            onTier={setAutoTier}
             onFinish={handleFinish}
           />
         </Suspense>
@@ -333,6 +492,7 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
           <span className="hub-brand__name">TeamOS</span>
           <span className="race-brand-tag">GRAND PRIX</span>
           {mode === 'practice' && <span className="race-brand-tag is-practice">PRACTICE · AI</span>}
+          {room && mode === 'online' && <span className="race-brand-tag">ROOM · {room.toUpperCase()}</span>}
         </button>
         <div className="hub-topbar__right">
           <button type="button" className="hub-icon-btn" onClick={toggleMute} aria-label={muted ? 'Unmute' : 'Mute'} title={muted ? 'Unmute' : 'Mute'}>
@@ -402,6 +562,8 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
           spectating={spectating && racing}
           callsign={callsign}
           hue={hue}
+          trackId={trackId}
+          onVote={handleVote}
           onProfile={handleProfile}
           onReady={handleReady}
           onExit={onExit}
@@ -416,16 +578,23 @@ export default function RaceExperience({ onExit, lowPerf = false, touch = false 
           <RaceStrip standings={standings} selfId={selfId} telemetryRef={telemetryRef} />
           <StandingsRail standings={standings} players={players} selfId={selfId} />
           <TelemetryBars telemetryRef={telemetryRef} />
-          <TrackMap playersRef={playersRef} shipStateRef={shipStateRef} selfId={selfId} selfHue={hue} telemetryRef={telemetryRef} />
+          <TrackMap playersRef={playersRef} shipStateRef={shipStateRef} selfId={selfId} selfHue={hue} telemetryRef={telemetryRef} trackId={trackId} />
           <LapTimer telemetryRef={telemetryRef} />
           <FinalLapFlash telemetryRef={telemetryRef} />
-          {myPlace && !results && <FinishBanner place={myPlace} />}
+          {feed.length > 0 && (
+            <div className="race-feed" aria-hidden="true">
+              {feed.map((e) => (
+                <div key={e.key} className={`race-feed__item is-${e.tone}`}>{e.text}</div>
+              ))}
+            </div>
+          )}
+          {myPlace && !results && <FinishBanner place={myPlace} gapMs={photoGapMs} />}
         </>
       )}
       {conn === 'open' && racing && spectating && (
         <>
           <StandingsRail standings={standings} players={players} selfId={selfId} />
-          <TrackMap playersRef={playersRef} shipStateRef={shipStateRef} selfId={selfId} selfHue={hue} />
+          <TrackMap playersRef={playersRef} shipStateRef={shipStateRef} selfId={selfId} selfHue={hue} trackId={trackId} />
         </>
       )}
 

@@ -1,10 +1,10 @@
 'use client';
 
-// The Nebula Circuit — a single hand-tuned closed spline that every client
-// rebuilds identically, so the whole grid races the exact same ribbon of light.
-// Gates, boost pads and the start arch are derived from the curve; asteroid
-// fields are generated from a seed the server hands out per race, which keeps
-// obstacle layouts in perfect sync across machines with zero geometry traffic.
+// The Grand Prix circuits — hand-tuned closed splines that every client (and
+// the arena engine, and the AI pilots) rebuild identically. Gates, boost pads,
+// pickup pods and the start arch derive from each curve; asteroid fields are
+// generated from a seed the server hands out per race, which keeps obstacle
+// layouts in perfect sync across machines with zero geometry traffic.
 
 import * as THREE from 'three';
 
@@ -13,24 +13,67 @@ export const LAPS = 3;          // laps to the checkered flag
 export const CORRIDOR = 13;     // half-width of the legal racing corridor
 export const GATE_RADIUS = 5.2; // pass detection radius around a gate center
 
-// Sweeping figure-flow loop with real elevation change — long straights for
-// slipstream duels, a tight hairpin, and a high crest before the finish dive.
-const CONTROL_POINTS = [
-  [0, 2, -78], [52, 3, -102], [108, 7, -70], [128, 12, -6],
-  [102, 18, 62], [44, 10, 92], [-28, 5, 104], [-92, 9, 76],
-  [-126, 16, 12], [-108, 22, -58], [-52, 12, -96], [-20, 4, -86],
+// Three circuits, three characters:
+//   0 Nebula Circuit — the classic: sweeping figure-flow, a hairpin, a crest.
+//   1 Ion Straits    — a speed bowl: two monster straights for slipstream
+//                      drag-races, joined by fast 180s and one chicane kink.
+//   2 Helix Falls    — the technical one: tight footprint, huge elevation
+//                      swings — a climbing spiral and a diving return.
+export const TRACKS = [
+  {
+    id: 0,
+    name: 'Nebula Circuit',
+    tension: 0.85,
+    points: [
+      [0, 2, -78], [52, 3, -102], [108, 7, -70], [128, 12, -6],
+      [102, 18, 62], [44, 10, 92], [-28, 5, 104], [-92, 9, 76],
+      [-126, 16, 12], [-108, 22, -58], [-52, 12, -96], [-20, 4, -86],
+    ],
+    padTs: [0.055, 0.21, 0.3, 0.475, 0.635, 0.72, 0.885],
+    pickupTs: [0.13, 0.37, 0.58, 0.8],
+  },
+  {
+    id: 1,
+    name: 'Ion Straits',
+    tension: 0.7,
+    points: [
+      [-130, 3, -40], [-60, 2, -52], [40, 4, -50], [120, 3, -42],
+      [152, 7, 0], [120, 4, 42], [30, 2, 54], [-42, 7, 42],
+      [-92, 3, 56], [-142, 6, 16],
+    ],
+    padTs: [0.08, 0.2, 0.32, 0.55, 0.68, 0.82],
+    pickupTs: [0.15, 0.44, 0.62, 0.9],
+  },
+  {
+    id: 2,
+    name: 'Helix Falls',
+    tension: 0.9,
+    points: [
+      [0, 24, -70], [55, 18, -55], [82, 10, 0], [55, 4, 56],
+      [0, 2, 76], [-52, 8, 56], [-78, 16, 8], [-58, 26, -36],
+      [-20, 30, -62],
+    ],
+    padTs: [0.1, 0.3, 0.52, 0.74, 0.9],
+    pickupTs: [0.2, 0.45, 0.65, 0.85],
+  },
 ];
 
+export const TRACK_COUNT = TRACKS.length;
+const clampTrackId = (id) => (Number.isInteger(id) && id >= 0 && id < TRACKS.length ? id : 0);
+
 const SAMPLE_COUNT = 768;
+const UP = new THREE.Vector3(0, 1, 0);
 
-let cached = null;
+const cached = new Map(); // trackId -> built track
 
-// Build (once) the curve + everything derived from it.
-export function getTrack() {
-  if (cached) return cached;
+// Build (once per circuit) the curve + everything derived from it.
+export function getTrack(trackId = 0) {
+  const tid = clampTrackId(trackId);
+  if (cached.has(tid)) return cached.get(tid);
+  const def = TRACKS[tid];
 
-  const pts = CONTROL_POINTS.map(([x, y, z]) => new THREE.Vector3(x, y, z));
-  const curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal', 0.85);
+  const pts = def.points.map(([x, y, z]) => new THREE.Vector3(x, y, z));
+  const curve = new THREE.CatmullRomCurve3(pts, true, 'centripetal', def.tension);
   const length = curve.getLength();
 
   // Dense uniform samples for nearest-point lookups, the minimap and rails.
@@ -44,32 +87,38 @@ export function getTrack() {
     samples.push({ t, p, tan, nrm });
   }
 
+  const orient = (t) => {
+    const tan = curve.getTangentAt(t);
+    return new THREE.Quaternion().setFromRotationMatrix(
+      new THREE.Matrix4().lookAt(new THREE.Vector3(), tan, UP)
+    );
+  };
+
   const gates = [];
   for (let i = 0; i < GATE_COUNT; i++) {
     const t = i / GATE_COUNT;
-    const p = curve.getPointAt(t);
-    const tan = curve.getTangentAt(t);
-    const q = new THREE.Quaternion().setFromRotationMatrix(
-      new THREE.Matrix4().lookAt(new THREE.Vector3(), tan, UP)
-    );
-    gates.push({ idx: i, t, pos: p, quat: q, tan });
+    gates.push({ idx: i, t, pos: curve.getPointAt(t), quat: orient(t), tan: curve.getTangentAt(t) });
   }
 
   // Boost chevrons sit on the racing line between gates.
-  const pads = [0.055, 0.21, 0.3, 0.475, 0.635, 0.72, 0.885].map((t, i) => {
+  const pads = def.padTs.map((t, i) => ({ idx: i, t, pos: curve.getPointAt(t), quat: orient(t) }));
+
+  // Pickup pods float just OFF the racing line (alternating sides), so
+  // grabbing one is a deliberate detour, not a freebie.
+  const pickups = def.pickupTs.map((t, i) => {
     const p = curve.getPointAt(t);
     const tan = curve.getTangentAt(t);
-    const q = new THREE.Quaternion().setFromRotationMatrix(
-      new THREE.Matrix4().lookAt(new THREE.Vector3(), tan, UP)
-    );
-    return { idx: i, t, pos: p, quat: q };
+    const nrm = new THREE.Vector3().crossVectors(tan, UP).normalize();
+    const side = i % 2 === 0 ? -1 : 1;
+    const pos = p.clone().addScaledVector(nrm, side * 4.6);
+    pos.y += 0.6;
+    return { idx: i, t, pos, side };
   });
 
-  cached = { curve, samples, gates, pads, length, start: gates[0] };
-  return cached;
+  const built = { id: tid, name: def.name, curve, samples, gates, pads, pickups, length, start: gates[0] };
+  cached.set(tid, built);
+  return built;
 }
-
-const UP = new THREE.Vector3(0, 1, 0);
 
 // Deterministic PRNG — same seed, same asteroid belt, on every client.
 export function mulberry32(seed) {
@@ -82,10 +131,20 @@ export function mulberry32(seed) {
   };
 }
 
+// The three pickup kinds, dealt per race from the shared seed so every client
+// (and the engine) agrees on what's floating where without any extra traffic.
+export const PICKUP_KINDS = ['shield', 'overcharge', 'emp'];
+export function dealPickupKinds(seed, trackId = 0) {
+  const { pickups } = getTrack(trackId);
+  const rand = mulberry32((seed ^ 0x9e3779b9) >>> 0);
+  return pickups.map(() => PICKUP_KINDS[Math.floor(rand() * PICKUP_KINDS.length)]);
+}
+
 // Scatter rocks along the corridor — some drift right on the racing line, but
-// never inside a gate ring or on top of a boost pad, and never on the grid.
-export function genObstacles(seed, count) {
-  const { curve, gates, pads } = getTrack();
+// never inside a gate ring, on a boost pad or a pickup pod, and never on the
+// grid. Count is part of the shared contract — identical for every client.
+export function genObstacles(seed, count, trackId = 0) {
+  const { curve, gates, pads, pickups } = getTrack(trackId);
   const rand = mulberry32(seed);
   const out = [];
   let guard = 0;
@@ -93,8 +152,9 @@ export function genObstacles(seed, count) {
     const t = rand();
     const nearGate = gates.some((g) => Math.abs(wrapDelta(t - g.t)) < 0.016);
     const nearPad = pads.some((p) => Math.abs(wrapDelta(t - p.t)) < 0.012);
+    const nearPickup = pickups.some((p) => Math.abs(wrapDelta(t - p.t)) < 0.012);
     const onGrid = t > 0.94 || t < 0.03; // keep the start straight clean
-    if (nearGate || nearPad || onGrid) continue;
+    if (nearGate || nearPad || nearPickup || onGrid) continue;
     const p = curve.getPointAt(t);
     const tan = curve.getTangentAt(t);
     const nrm = new THREE.Vector3().crossVectors(tan, UP).normalize();
@@ -125,10 +185,10 @@ function wrapDelta(d) {
 
 // Nearest sample index to a world position, searched locally around a hint so
 // the per-frame cost stays tiny. Falls back to a full scan when lost.
-export function nearestSample(pos, hintIdx = 0) {
-  const { samples } = getTrack();
+export function nearestSample(pos, hintIdx = 0, trackId = 0) {
+  const { samples } = getTrack(trackId);
   const n = samples.length;
-  let best = hintIdx;
+  let best = ((hintIdx % n) + n) % n;
   let bestD = samples[best].p.distanceToSquared(pos);
   let improved = true;
   let range = 24;
@@ -152,8 +212,8 @@ export function nearestSample(pos, hintIdx = 0) {
 }
 
 // Starting grid slot for a pilot: 2 columns × N rows behind the start line.
-export function gridSlot(index) {
-  const { start } = getTrack();
+export function gridSlot(index, trackId = 0) {
+  const { start } = getTrack(trackId);
   const row = Math.floor(index / 2);
   const col = index % 2 === 0 ? -1 : 1;
   const nrm = new THREE.Vector3().crossVectors(start.tan, UP).normalize();

@@ -705,6 +705,14 @@ kbd {
 /* priority so the three centered labels never overprint: wrong > off > slip */
 .race-flags[data-off='1'] .race-flags__slip,
 .race-flags[data-wrong='1'] .race-flags__slip { opacity: 0; }
+/* pickup states: steady glow, lower priority than the warnings above */
+.race-flags__shield, .race-flags__over { color: #fff; text-shadow: 0 0 12px rgba(255, 255, 255, 0.8); }
+.race-flags[data-shield='1'] .race-flags__shield { opacity: 0.9; }
+.race-flags[data-over='1'] .race-flags__over { opacity: 0.9; animation: race-pulse 1.1s ease-in-out infinite; }
+.race-flags[data-shield='1'][data-over='1'] .race-flags__shield { opacity: 0; }
+.race-flags[data-off='1'] .race-flags__shield, .race-flags[data-wrong='1'] .race-flags__shield,
+.race-flags[data-off='1'] .race-flags__over, .race-flags[data-wrong='1'] .race-flags__over,
+.race-flags[data-slip='1'] .race-flags__shield, .race-flags[data-slip='1'] .race-flags__over { opacity: 0; }
 .race-flags[data-wrong='1'] .race-flags__off { opacity: 0; animation: none; }
 
 /* ---- circuit minimap ---- */
@@ -815,6 +823,87 @@ kbd {
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
 }
 .race-nametag__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pilot); box-shadow: 0 0 7px var(--pilot); }
+.race-nametag.is-ghost { opacity: 0.55; border-style: dashed; font-size: 10px; letter-spacing: 0.14em; }
+.race-nametag.is-ghost .race-nametag__dot { background: rgba(255, 255, 255, 0.7); box-shadow: none; }
+
+/* ---- overtake / pickup feed (left edge, under the strip) ---- */
+.race-feed {
+  position: absolute; top: 148px; left: 50%; transform: translateX(-50%);
+  z-index: 19; display: grid; gap: 5px; justify-items: center; pointer-events: none;
+}
+.race-feed__item {
+  padding: 5px 14px; border-radius: 999px; font-size: 0.74rem; font-weight: 700;
+  letter-spacing: 0.08em; color: #fff; background: rgba(0, 0, 0, 0.5);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+  animation: race-feed-in 0.3s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.race-feed__item.is-down { color: rgba(255, 255, 255, 0.6); }
+@keyframes race-feed-in { from { opacity: 0; transform: translateY(-8px) scale(0.9); } to { opacity: 1; transform: none; } }
+
+/* ---- circuit vote (lobby) ---- */
+.race-vote { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin-bottom: 14px; }
+.race-vote__opt {
+  position: relative; padding: 8px 6px; border-radius: 9px; font-size: 0.7rem; font-weight: 700;
+  letter-spacing: 0.05em; color: rgba(255, 255, 255, 0.65); text-align: center; cursor: pointer;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.13);
+  transition: all 0.18s ease;
+}
+.race-vote__opt:hover { color: #fff; border-color: rgba(255, 255, 255, 0.3); }
+.race-vote__opt.is-mine { color: #fff; background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.5); }
+.race-vote__opt.is-leading { box-shadow: 0 0 14px rgba(255, 255, 255, 0.12); }
+.race-vote__opt em {
+  position: absolute; top: -6px; right: -4px; font-style: normal;
+  min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; font-size: 10px; line-height: 16px;
+  color: #000; background: #fff; font-weight: 800;
+}
+
+/* ---- photo finish ---- */
+.race-finish__photo {
+  display: block; font-size: 12px; font-weight: 800; letter-spacing: 0.34em;
+  color: #fff; margin-bottom: 4px; animation: race-pulse 0.5s ease-in-out 4;
+  text-shadow: 0 0 16px rgba(255, 255, 255, 0.9);
+}
+
+/* ---- season standings strip (podium) ---- */
+.race-season {
+  margin: 4px 0 14px; padding: 10px 14px; border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.race-season__head {
+  display: block; font-size: 9px; font-weight: 700; letter-spacing: 0.24em;
+  text-transform: uppercase; color: rgba(255, 255, 255, 0.45); margin-bottom: 7px;
+}
+.race-season__rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.race-season__rows li { display: flex; align-items: center; gap: 9px; font-size: 0.78rem; color: rgba(255, 255, 255, 0.8); }
+.race-season__pos { width: 13px; text-align: right; font-weight: 800; color: rgba(255, 255, 255, 0.45); }
+.race-season__name { flex: 1; text-align: left; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.race-season__pts { font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.55); }
+
+/* ---- office GP leaderboard (race station panel) ---- */
+.race-board {
+  margin-top: 20px; padding: 12px 14px; border-radius: 14px; text-align: left;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.race-board__tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.race-board__tabs button {
+  flex: 1; padding: 6px 8px; border-radius: 8px; font-size: 0.68rem; font-weight: 700;
+  letter-spacing: 0.08em; color: rgba(255, 255, 255, 0.55); cursor: pointer;
+  background: transparent; border: 1px solid rgba(255, 255, 255, 0.12); transition: all 0.15s ease;
+}
+.race-board__tabs button.is-on { color: #fff; background: rgba(255, 255, 255, 0.1); border-color: rgba(255, 255, 255, 0.35); }
+.race-board__rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.race-board__rows li, .race-board__laprow { display: flex; align-items: center; gap: 8px; font-size: 0.76rem; color: rgba(255, 255, 255, 0.8); }
+.race-board__pos { width: 13px; text-align: right; font-weight: 800; color: rgba(255, 255, 255, 0.4); flex: none; }
+.race-board__name { flex: 1; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.race-board__meta { font-size: 0.66rem; color: rgba(255, 255, 255, 0.4); }
+.race-board__pts { font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.6); font-weight: 600; }
+.race-board__laps { display: grid; gap: 10px; }
+.race-board__track {
+  display: block; font-size: 9px; font-weight: 700; letter-spacing: 0.2em;
+  text-transform: uppercase; color: rgba(255, 255, 255, 0.45); margin-bottom: 4px;
+}
+.race-board__lapblock { display: grid; gap: 3px; }
 
 /* Small screens: compact the racing chrome. */
 @media (max-width: 640px) {

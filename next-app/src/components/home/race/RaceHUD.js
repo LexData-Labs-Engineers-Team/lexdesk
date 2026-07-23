@@ -7,7 +7,8 @@
 // zero-re-render pattern the hub's radar uses.
 
 import { useEffect, useRef, useState } from 'react';
-import { getTrack, GATE_COUNT, LAPS } from './trackData.mjs';
+import { getTrack, GATE_COUNT, LAPS, TRACKS } from './trackData.mjs';
+import { apiFetch } from '../../../lib/apiFetch';
 
 /* The rulebook — shown on every grid, so nobody launches blind. */
 export const RULES = [
@@ -34,12 +35,12 @@ const fmtTime = (ms) => {
 };
 const ordinal = (n) => (n === 1 ? '1ST' : n === 2 ? '2ND' : n === 3 ? '3RD' : `${n}TH`);
 
-// Project the circuit into a 120×120 viewbox once — shared by the racing
-// minimap and the lobby's circuit preview.
-let mapFit = null;
-function getMapFit() {
-  if (mapFit) return mapFit;
-  const { samples, gates } = getTrack();
+// Project a circuit into a 120×120 viewbox once per track — shared by the
+// racing minimap and the lobby's circuit preview.
+const mapFits = new Map();
+function getMapFit(trackId = 0) {
+  if (mapFits.has(trackId)) return mapFits.get(trackId);
+  const { samples, gates } = getTrack(trackId);
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   samples.forEach((s) => {
     minX = Math.min(minX, s.p.x); maxX = Math.max(maxX, s.p.x);
@@ -47,7 +48,7 @@ function getMapFit() {
   });
   const pad = 10, size = 120;
   const scale = (size - pad * 2) / Math.max(maxX - minX, maxZ - minZ);
-  mapFit = {
+  const fit = {
     pts: samples.filter((_, i) => i % 6 === 0).map((s) =>
       `${(pad + (s.p.x - minX) * scale).toFixed(1)},${(pad + (s.p.z - minZ) * scale).toFixed(1)}`
     ).join(' '),
@@ -58,13 +59,14 @@ function getMapFit() {
       y: pad + (g.pos.z - minZ) * scale,
     })),
   };
-  return mapFit;
+  mapFits.set(trackId, fit);
+  return fit;
 }
 
 /* ------------------------------------------------------------------ lobby */
 // Static outline of the circuit with gate dots — the lobby's map table.
-function CircuitPreview() {
-  const fit = getMapFit();
+function CircuitPreview({ trackId = 0 }) {
+  const fit = getMapFit(trackId);
   return (
     <div className="race-preview" aria-hidden="true">
       <svg viewBox="0 0 120 120">
@@ -79,7 +81,7 @@ function CircuitPreview() {
 
 export function RaceLobby({
   players, selfId, phase, countdownEndsAt, netRef, spectating,
-  callsign, hue, onProfile, onReady, onExit, touch,
+  callsign, hue, trackId = 0, onVote, onProfile, onReady, onExit, touch,
 }) {
   const [name, setName] = useState(callsign);
   const [secs, setSecs] = useState(null);
@@ -87,7 +89,12 @@ export function RaceLobby({
   const me = players.find((p) => p.id === selfId);
   const pilots = players.filter((p) => !p.spectator);
   const readyCount = pilots.filter((p) => p.ready).length;
-  const circuitLen = Math.round(getTrack().length);
+
+  // Circuit vote: count human ballots; the preview follows the leading pick.
+  const voteCounts = TRACKS.map((t) => players.filter((p) => !p.bot && p.vote === t.id).length);
+  const leadVotes = Math.max(...voteCounts);
+  const previewId = leadVotes > 0 ? voteCounts.indexOf(leadVotes) : trackId;
+  const circuitLen = Math.round(getTrack(previewId).length);
 
   useEffect(() => setName(callsign), [callsign]);
   useEffect(() => {
@@ -199,9 +206,9 @@ export function RaceLobby({
           </div>
 
           <div className="race-rules">
-            <span className="race-rules__head">Nebula Circuit</span>
+            <span className="race-rules__head">{TRACKS[previewId].name}</span>
             <div className="race-lobby__circuit">
-              <CircuitPreview />
+              <CircuitPreview trackId={previewId} />
               <div className="race-lobby__stats">
                 <span className="race-chip">{LAPS} laps</span>
                 <span className="race-chip">{GATE_COUNT} gates</span>
@@ -209,6 +216,29 @@ export function RaceLobby({
                 {bestLap > 0 && <span className="race-chip is-best">PB {fmtTime(bestLap)}</span>}
               </div>
             </div>
+            {!spectating && (
+              <>
+                <span className="race-rules__head">Next circuit — vote</span>
+                <div className="race-vote" role="radiogroup" aria-label="Circuit vote">
+                  {TRACKS.map((t) => {
+                    const mine = me?.vote === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        role="radio"
+                        aria-checked={mine}
+                        className={`race-vote__opt${mine ? ' is-mine' : ''}${previewId === t.id && leadVotes > 0 ? ' is-leading' : ''}`}
+                        onClick={() => onVote?.(mine ? null : t.id)}
+                      >
+                        {t.name}
+                        {voteCounts[t.id] > 0 && <em>{voteCounts[t.id]}</em>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </>
+            )}
             <span className="race-rules__head">Race rules</span>
             <ul>
               {RULES.map(([k, v]) => (
@@ -392,6 +422,8 @@ export function TelemetryBars({ telemetryRef }) {
         flagsRef.current.dataset.slip = tl.slip ? '1' : '';
         flagsRef.current.dataset.off = tl.off ? '1' : '';
         flagsRef.current.dataset.wrong = tl.wrong ? '1' : '';
+        flagsRef.current.dataset.shield = tl.shield ? '1' : '';
+        flagsRef.current.dataset.over = tl.over ? '1' : '';
       }
       raf = requestAnimationFrame(tick);
     };
@@ -415,6 +447,8 @@ export function TelemetryBars({ telemetryRef }) {
         <span className="race-flags__slip">SLIPSTREAM</span>
         <span className="race-flags__off">OFF TRACK — REJOIN</span>
         <span className="race-flags__wrong">WRONG WAY</span>
+        <span className="race-flags__shield">SHIELD</span>
+        <span className="race-flags__over">OVERCHARGE</span>
       </div>
       <div className="race-speednum">
         <strong ref={numRef}>0</strong>
@@ -433,10 +467,11 @@ export function TelemetryBars({ telemetryRef }) {
 }
 
 /* ---------------------------------------------------------------- minimap */
-export function TrackMap({ playersRef, shipStateRef, selfId, selfHue, telemetryRef }) {
+export function TrackMap({ playersRef, shipStateRef, selfId, selfHue, telemetryRef, trackId = 0 }) {
   const dotsRef = useRef(null);
   const gatesRef = useRef(null);
-  const fit = useRef(getMapFit());
+  const fit = useRef(getMapFit(trackId));
+  fit.current = getMapFit(trackId); // follows circuit changes between races
 
   useEffect(() => {
     let raf;
@@ -505,6 +540,36 @@ export function TrackMap({ playersRef, shipStateRef, selfId, selfHue, telemetryR
   );
 }
 
+/* --------------------------------------------------- season standings strip */
+// Office GP: live season points pulled from the leaderboard API. Fails silent —
+// a podium without the strip beats a podium with an error in it.
+function SeasonStrip() {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let on = true;
+    apiFetch('/api/race/leaderboard', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (on && j?.standings?.length) setRows(j.standings.slice(0, 3)); })
+      .catch(() => {});
+    return () => { on = false; };
+  }, []);
+  if (!rows) return null;
+  return (
+    <div className="race-season">
+      <span className="race-season__head">Office GP — season standings</span>
+      <ol className="race-season__rows">
+        {rows.map((r, i) => (
+          <li key={r.name}>
+            <span className="race-season__pos">{i + 1}</span>
+            <span className="race-season__name">{r.name}</span>
+            <span className="race-season__pts">{r.points} pts</span>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 /* ----------------------------------------------------------------- podium */
 export function Podium({ results, selfId, onExit }) {
   if (!results) return null;
@@ -544,6 +609,7 @@ export function Podium({ results, selfId, onExit }) {
             ))}
           </ul>
         )}
+        <SeasonStrip />
         <p className="race-podium__note">Next grid opens in a moment — stay put to race again.</p>
         <div className="race-podium__actions">
           <button type="button" className="hub-ghost" onClick={onExit}>Back to hub</button>
@@ -554,12 +620,18 @@ export function Podium({ results, selfId, onExit }) {
 }
 
 /* --------------------------------------------------------- finish banner */
-export function FinishBanner({ place }) {
+export function FinishBanner({ place, gapMs = null }) {
   if (!place) return null;
+  const photo = gapMs !== null && gapMs < 1000;
   return (
     <div className="race-finish" aria-hidden="true">
+      {photo && <span className="race-finish__photo">PHOTO FINISH</span>}
       <span className="race-finish__place">{ordinal(place)}</span>
-      <span className="race-finish__sub">across the line — waiting on the field</span>
+      <span className="race-finish__sub">
+        {photo
+          ? `+${(gapMs / 1000).toFixed(3)}s behind ${ordinal(place - 1)} — inches.`
+          : 'across the line — waiting on the field'}
+      </span>
     </div>
   );
 }

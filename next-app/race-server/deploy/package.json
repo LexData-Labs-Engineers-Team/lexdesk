@@ -1,0 +1,11 @@
+{
+  "name": "nebula-race-relay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone WebSocket relay for the Nebula Grand Prix race arena (stateless; ws + three only).",
+  "dependencies": {
+    "three": "0.184.0",
+    "ws": "8.21.0"
+  }
+}

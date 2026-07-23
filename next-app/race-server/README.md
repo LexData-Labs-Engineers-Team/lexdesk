@@ -49,12 +49,32 @@ npm run race:test    # synthetic two-pilot lifecycle test (arm/race/resume/podiu
   offline practice). Humans displace them; they never race an empty room.
   They hold the racing line inside the obstacle-free center lane, brake for
   corners, boost on straights, and rubber-band mildly around the lead human.
+- **Three circuits** (Nebula Circuit / Ion Straits / Helix Falls) — the lobby
+  votes; majority wins at launch, ties go to chance, silence keeps the
+  current one. Track geometry lives in `trackData.mjs`.
+- **Pickup pods** float off the racing line (kinds dealt from the race seed):
+  *shield* absorbs one hit, *overcharge* raises the speed cap 6 s, *EMP*
+  shocks every unshielded ship within 20u. First grab wins (engine
+  arbitrates); pods respawn after 12 s.
 - 8 ships max on a grid; later arrivals spectate until the next race.
-- Finishes before GO — or without ~full track progress — are ignored;
+- Finishes before GO — or without ~full track progress — are ignored, and
+  progress that grows faster than a physically possible pace is clamped;
   podium holds ~14 s, then the next lobby opens.
 - A race hard-caps at 6 minutes; stragglers get 75 s after the winner.
 - Duplicate callsigns are de-duped server-side (`NAME·2`).
-- A finisher who disconnects still keeps their podium row.
+- A finisher who disconnects still keeps their podium row (and a racer who
+  reconnects within 30 s resumes their seat mid-race).
+- **Rooms**: `?race_room=<name>` on the page URL gives that link its own
+  private arena (`?room=` on the socket); idle rooms free after a minute.
+
+## Office GP (persistent leaderboard)
+
+Finished online races post to `/api/race/result` (Bearer token when signed
+in, anonymous by callsign otherwise; DNFs and sub-30s claims are dropped).
+`/api/race/leaderboard` serves monthly-season standings (9-6-4-3-2-1-style
+points, humans ≥ 2 races only) plus per-circuit lap records — shown in the
+Race station panel and on the podium. Needs `DATABASE_URL` (the table
+self-provisions on first use).
 
 ## Deploying multiplayer
 
@@ -63,3 +83,14 @@ gracefully offers **solo practice vs AI** instead. For real multiplayer,
 either self-host the whole app (`npm run build && npm start` — arena
 included, one port) or run `race-server/server.mjs` on any Node box and
 point `NEXT_PUBLIC_RACE_WS_URL` at it (`wss://` behind TLS).
+
+### Deploy the relay (hosted kit)
+
+`race-server/deploy/` is a ready-made kit for hosting the relay on
+Railway / Render / Fly.io: a minimal Dockerfile (only `ws` + `three`),
+per-host configs, and `server-with-health.mjs` — the relay plus a
+`GET /healthz` → `200` endpoint, because PaaS health checks speak HTTP
+and the bare relay is WebSocket-only. Start with
+[`deploy/DEPLOY.md`](deploy/DEPLOY.md): ranked host options, the exact
+Vercel `NEXT_PUBLIC_RACE_WS_URL` step (build-time — redeploy after
+setting it), and a one-line `wscat` smoke test.

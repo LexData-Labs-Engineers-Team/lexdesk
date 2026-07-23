@@ -77,8 +77,8 @@ function RaceShipMesh({ hue, glowRef, trailLength = 7, lit = true }) {
 }
 
 /* ------------------------------------------------------------ track ribbon */
-function TrackRibbon() {
-  const track = getTrack();
+function TrackRibbon({ trackId }) {
+  const track = getTrack(trackId);
 
   // Faint road surface between the rails — a strip of quads along the samples.
   const surface = useMemo(() => {
@@ -181,8 +181,8 @@ function TrackRibbon() {
 }
 
 // Pulses of light that travel the circuit forever — the track feels powered.
-function PulseRunners({ count = 12 }) {
-  const track = getTrack();
+function PulseRunners({ count = 12, trackId }) {
+  const track = getTrack(trackId);
   const refs = useRef([]);
   const seeds = useMemo(
     () => Array.from({ length: count }, (_, i) => ({ t0: i / count, v: 0.012 + (i % 3) * 0.004 })),
@@ -266,8 +266,8 @@ function Gate({ data, gateStateRef }) {
   );
 }
 
-function StartArch() {
-  const { start } = getTrack();
+function StartArch({ trackId }) {
+  const { start } = getTrack(trackId);
   return (
     <group position={start.pos} quaternion={start.quat}>
       {[-1, 1].map((side) => (
@@ -286,8 +286,8 @@ function StartArch() {
 }
 
 /* -------------------------------------------------------------- boost pads */
-function BoostPads({ padFxRef }) {
-  const { pads } = getTrack();
+function BoostPads({ padFxRef, trackId }) {
+  const { pads } = getTrack(trackId);
   const mats = useRef([]);
   useFrame((st, delta) => {
     for (let i = 0; i < pads.length; i++) {
@@ -636,14 +636,16 @@ function SpectatorRig({ playersRef }) {
 
 /* -------------------------------------------------------------- the pilot */
 function LocalPilot({
-  phase, startAt, gridIndex, hue, lowPerf, control, playersRef, obstacles,
+  phase, startAt, trackId = 0, gridIndex, hue, lowPerf, control, playersRef, obstacles,
+  pickupsRef, powerRef,
   shipStateRef, telemetryRef, gateStateRef, padFxRef, fxRef, netRef,
   onGate, onFinish,
 }) {
   const { camera } = useThree();
-  const track = getTrack();
+  const track = getTrack(trackId);
   const ship = useRef();
   const glow = useRef();
+  const shieldRing = useRef();
   const keys = useRef({});
   const d = useRef({
     pos: new THREE.Vector3(), heading: 0, speed: 0, bank: 0, y: 0,
@@ -651,6 +653,7 @@ function LocalPilot({
     hint: 0, wrongT: 0, invuln: 0, shake: 0, bumpCd: 0, obsCd: 0,
     lastCount: 99, launched: false, respawnGate: 0,
     lapStart: 0, lastLapMs: 0, bestLapMs: 0, offT: 0,
+    shield: false, overUntil: 0, pickupCd: {}, whooshCd: new Map(),
   }).current;
 
   // Personal best lap survives across sessions.
@@ -696,7 +699,7 @@ function LocalPilot({
   // Phase transitions: lock onto the grid at launch, reset progress counters.
   useEffect(() => {
     if (phase === 'racing') {
-      const slot = gridSlot(Math.max(gridIndex, 0));
+      const slot = gridSlot(Math.max(gridIndex, 0), trackId);
       d.pos.copy(slot.pos);
       d.y = slot.pos.y;
       d.heading = slot.heading;
@@ -709,7 +712,9 @@ function LocalPilot({
       d.launched = false;
       d.energy = 1;
       d.respawnGate = 0;
-      d.hint = nearestSample(d.pos, 0);
+      d.shield = false;
+      d.overUntil = 0;
+      d.hint = nearestSample(d.pos, 0, trackId);
       gateStateRef.current = { next: 1, finished: false };
     } else if (phase === 'lobby' || phase === 'armed') {
       // free practice around the start straight
@@ -717,15 +722,15 @@ function LocalPilot({
       d.finished = false;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase]);
+  }, [phase, trackId]);
 
   // Spawn on the practice apron the first time the arena loads.
   useEffect(() => {
-    const slot = gridSlot(0);
+    const slot = gridSlot(0, trackId);
     d.pos.copy(slot.pos).add(new THREE.Vector3(0, 0, 0));
     d.y = slot.pos.y;
     d.heading = slot.heading;
-    d.hint = nearestSample(d.pos, 0);
+    d.hint = nearestSample(d.pos, 0, trackId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -773,6 +778,14 @@ function LocalPilot({
         if (!rec.placed || rec.cur.y < -100) continue; // no live position yet
         scratch.current.copy(rec.cur).sub(d.pos);
         const dist = scratch.current.length();
+        // Doppler whoosh on a genuine close pass — big closing speed nearby.
+        if (dist < 7 && Math.abs(rec.speed - d.speed) > 12) {
+          const last = d.whooshCd.get(rec.id) || -9;
+          if (st.clock.elapsedTime - last > 1.6) {
+            d.whooshCd.set(rec.id, st.clock.elapsedTime);
+            audio.whoosh?.();
+          }
+        }
         if (dist > 1.6 && dist < 10 && rec.speed > 9) {
           scratch.current.normalize();
           if (scratch.current.dot(fwd.current) > 0.93) { slip = true; break; }
@@ -784,14 +797,32 @@ function LocalPilot({
     if (boosting) d.energy = Math.max(0, d.energy - 0.32 * dt);
     else d.energy = Math.min(1, d.energy + (slip ? 0.22 : 0.09) * dt);
 
+    /* ---- power events (pickup grants + EMP shocks, relayed by the arena) */
+    if (powerRef?.current?.queue?.length) {
+      for (const ev of powerRef.current.queue.splice(0)) {
+        if (ev.type === 'grant') {
+          if (ev.kind === 'shield') { d.shield = true; audio.shield?.(); }
+          else if (ev.kind === 'overcharge') { d.overUntil = st.clock.elapsedTime + 6; d.energy = 1; audio.pad(); }
+          else if (ev.kind === 'emp') { audio.emp?.(); } // our own blast — rivals feel it
+        } else if (ev.type === 'emp' && racing) {
+          const dx = d.pos.x - ev.x, dz = d.pos.z - ev.z;
+          if (dx * dx + dz * dz < 20 * 20) {
+            if (d.shield) { d.shield = false; audio.shield?.(); }
+            else { d.speed *= 0.45; d.shake = Math.min(d.shake + 0.6, 1); audio.emp?.(); }
+          }
+        }
+      }
+    }
+    const overcharged = st.clock.elapsedTime < d.overUntil;
+
     const offTrack = (() => {
-      d.hint = nearestSample(d.pos, d.hint);
+      d.hint = nearestSample(d.pos, d.hint, trackId);
       const s = track.samples[d.hint];
       return scratch.current.copy(d.pos).sub(s.p).setY(0).length() > CORRIDOR;
     })();
 
-    const maxSpd = (boosting ? 41 : 28) + (slip ? 6 : 0);
-    const accel = boosting ? 62 : 38;
+    const maxSpd = (boosting ? 41 : 28) + (slip ? 6 : 0) + (overcharged ? 8 : 0);
+    const accel = (boosting ? 62 : 38) + (overcharged ? 14 : 0);
     d.heading += turn * (2.15 - Math.min(Math.abs(d.speed) / 60, 0.55)) * dt;
     d.speed += thrust * accel * dt;
     d.speed *= 1 - (offTrack ? 3.4 : 1.15) * dt;
@@ -831,11 +862,18 @@ function LocalPilot({
           const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
           d.pos.x += (dx / dist) * (rr - dist + 0.05);
           d.pos.z += (dz / dist) * (rr - dist + 0.05);
-          d.speed *= 0.38;
-          d.obsCd = 0.7;
-          d.shake = Math.min(d.shake + 0.5, 1);
-          fxRef.current = [...fxRef.current, { key: `o${st.clock.elapsedTime}`, pos: [o.pos.x, o.pos.y, o.pos.z], born: st.clock.elapsedTime }];
-          audio.clank();
+          if (d.shield) {
+            // The shield eats the hit: pushed off the rock but zero speed loss.
+            d.shield = false;
+            d.obsCd = 0.7;
+            audio.shield?.();
+          } else {
+            d.speed *= 0.38;
+            d.obsCd = 0.7;
+            d.shake = Math.min(d.shake + 0.5, 1);
+            fxRef.current = [...fxRef.current, { key: `o${st.clock.elapsedTime}`, pos: [o.pos.x, o.pos.y, o.pos.z], born: st.clock.elapsedTime }];
+            audio.clank();
+          }
           break;
         }
       }
@@ -850,6 +888,7 @@ function LocalPilot({
           const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) || 1;
           d.pos.x += (dx / dist) * (1.5 - dist) * 0.85;
           d.pos.z += (dz / dist) * (1.5 - dist) * 0.85;
+          if (d.shield) { d.shield = false; d.bumpCd = 0.5; audio.shield?.(); break; }
           d.speed *= 0.74;
           d.bumpCd = 0.5;
           d.shake = Math.min(d.shake + 0.35, 1);
@@ -874,6 +913,24 @@ function LocalPilot({
           d.energy = 1;
           d.speed = Math.min(d.speed + 5, 46);
           audio.pad();
+        }
+      }
+    }
+
+    /* ---- pickup pods: fly through an available pod to claim it. The arena
+       awards first-grab (our effect lands when its pickupTaken echoes back). */
+    if (racing && pickupsRef?.current) {
+      const pk = pickupsRef.current;
+      const nowMs = netRef.current?.serverNow() ?? Date.now();
+      for (const pod of track.pickups) {
+        if ((pk.takenUntil[pod.idx] || 0) > nowMs) continue; // not respawned yet
+        const dx = d.pos.x - pod.pos.x, dz = d.pos.z - pod.pos.z;
+        if (dx * dx + dz * dz < 2.9 * 2.9 && Math.abs(d.pos.y - pod.pos.y) < 3.2) {
+          const t = st.clock.elapsedTime;
+          if (!d.pickupCd[pod.idx] || t - d.pickupCd[pod.idx] > 1) {
+            d.pickupCd[pod.idx] = t;
+            netRef.current?.send({ t: 'pickup', idx: pod.idx });
+          }
         }
       }
     }
@@ -968,10 +1025,17 @@ function LocalPilot({
       prog: racing || d.finished ? d.passed + frac : 0,
       lap: d.lap,
     };
+    if (shieldRing.current) {
+      shieldRing.current.visible = d.shield;
+      shieldRing.current.rotation.y += dt * 1.4;
+      shieldRing.current.rotation.x = Math.sin(st.clock.elapsedTime * 1.1) * 0.35;
+    }
     const tl = telemetryRef.current;
     tl.speed01 = Math.min(Math.abs(d.speed) / 41, 1);
     tl.energy = d.energy;
     tl.boost = boosting;
+    tl.shield = d.shield;
+    tl.over = overcharged;
     tl.slip = slip;
     tl.off = offTrack && racing;
     tl.wrong = d.wrongT > 1.1;
@@ -1020,6 +1084,97 @@ function LocalPilot({
   return (
     <group ref={ship}>
       <RaceShipMesh hue={hue} glowRef={glow} />
+      {/* pickup shield — a slow-tumbling energy ring, visible while armed */}
+      <mesh ref={shieldRing} visible={false} scale={1.6}>
+        <torusGeometry args={[1.05, 0.035, 8, 48]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.55} blending={THREE.AdditiveBlending} depthWrite={false} />
+      </mesh>
+    </group>
+  );
+}
+
+/* ----------------------------------------------------------- pickup pods */
+// Seeded power pods floating just off the racing line. Kind glyphs are pure
+// geometry (ring / chevron / spark) in the arena's monochrome language; taken
+// pods collapse and regrow when they respawn.
+const PICKUP_GEOM = {
+  shield: <torusGeometry args={[0.85, 0.1, 10, 32]} />,
+  overcharge: <coneGeometry args={[0.62, 1.25, 4]} />,
+  emp: <octahedronGeometry args={[0.75, 0]} />,
+};
+
+function PickupPods({ trackId, pickupsRef, netRef }) {
+  const track = getTrack(trackId);
+  const groups = useRef([]);
+  useFrame((st, delta) => {
+    const pk = pickupsRef.current;
+    const nowMs = netRef?.current?.serverNow() ?? Date.now();
+    for (const pod of track.pickups) {
+      const g = groups.current[pod.idx];
+      if (!g) continue;
+      const taken = (pk.takenUntil[pod.idx] || 0) > nowMs;
+      const target = taken ? 0.001 : 1;
+      const s = THREE.MathUtils.damp(g.scale.x, target, 6, delta);
+      g.scale.setScalar(Math.max(0.001, s));
+      g.visible = s > 0.02;
+      g.rotation.y += delta * 1.2;
+      g.position.y = pod.pos.y + Math.sin(st.clock.elapsedTime * 1.6 + pod.idx * 2.1) * 0.35;
+    }
+  });
+  const kinds = pickupsRef.current?.kinds || [];
+  return (
+    <group>
+      {track.pickups.map((pod) => (
+        <group key={pod.idx} ref={(el) => { groups.current[pod.idx] = el; }} position={pod.pos}>
+          <mesh>
+            {PICKUP_GEOM[kinds[pod.idx]] ?? PICKUP_GEOM.shield}
+            <meshStandardMaterial color="#ffffff" metalness={0.4} roughness={0.25} emissive="#ffffff" emissiveIntensity={0.9} transparent opacity={0.9} />
+          </mesh>
+          <mesh scale={1.5}>
+            <sphereGeometry args={[0.85, 12, 12]} />
+            <meshBasicMaterial color="#ffffff" transparent opacity={0.06} blending={THREE.AdditiveBlending} depthWrite={false} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/* ------------------------------------------------------------ ghost ship */
+// Your personal-best run, replayed as a translucent echo — practice mode's
+// rival that is exactly as fast as you were at your best.
+function GhostShip({ ghost, startAt, netRef }) {
+  const group = useRef();
+  useFrame(() => {
+    const g = group.current;
+    if (!g || !ghost?.frames?.length) return;
+    const elapsed = (netRef.current?.serverNow() ?? Date.now()) - startAt;
+    if (elapsed < 0 || elapsed > ghost.frames.length * ghost.dt) { g.visible = false; return; }
+    g.visible = true;
+    const fi = elapsed / ghost.dt;
+    const i = Math.min(Math.floor(fi), ghost.frames.length - 1);
+    const j = Math.min(i + 1, ghost.frames.length - 1);
+    const f = fi - i;
+    const a = ghost.frames[i], b = ghost.frames[j];
+    g.position.set(a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f);
+    g.rotation.y = a[3] + shortestAngle(a[3], b[3]) * f;
+  });
+  return (
+    <group ref={group} visible={false}>
+      <mesh rotation={[Math.PI / 2, 0, 0]} scale={0.95}>
+        <capsuleGeometry args={[0.18, 0.7, 6, 14]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.22} depthWrite={false} />
+      </mesh>
+      <mesh position={[0, -0.04, -0.05]} scale={0.95}>
+        <boxGeometry args={[1.3, 0.05, 0.36]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0.16} depthWrite={false} />
+      </mesh>
+      <Html center distanceFactor={26} position={[0, 1.5, 0]} zIndexRange={[30, 0]}>
+        <div className="race-nametag is-ghost">
+          <span className="race-nametag__dot" />
+          YOUR BEST
+        </div>
+      </Html>
     </group>
   );
 }
@@ -1051,20 +1206,44 @@ function RaceEffects({ telemetryRef }) {
   );
 }
 
+/* ------------------------------------------------------- fps governor */
+// Watches real frame rate and steps the quality tier down (or back up) with
+// hysteresis, so a struggling GPU sheds postprocessing + per-ship lights
+// instead of dropping the whole sim into a slideshow.
+function FpsGovernor({ onTier }) {
+  const acc = useRef({ t: 0, n: 0, tier: 0, lastChange: 0 });
+  useFrame((st, delta) => {
+    const a = acc.current;
+    a.t += delta; a.n += 1;
+    if (a.t < 2) return;
+    const fps = a.n / a.t;
+    a.t = 0; a.n = 0;
+    const now = st.clock.elapsedTime;
+    if (fps < 38 && a.tier < 2 && now - a.lastChange > 6) {
+      a.tier += 1; a.lastChange = now; onTier?.(a.tier);
+    } else if (fps > 55 && a.tier > 0 && now - a.lastChange > 9) {
+      a.tier -= 1; a.lastChange = now; onTier?.(a.tier);
+    }
+  });
+  return null;
+}
+
 /* ------------------------------------------------------------------ scene */
 export default function RaceScene({
-  phase, startAt, seed, gridIndex, spectating, lowPerf, control,
+  phase, startAt, seed, trackId = 0, gridIndex, spectating, lowPerf, control,
   playersRef, fleetVersion, shipStateRef, telemetryRef, netRef,
   selfHue, onGate, onFinish,
+  pickupsRef, powerRef, ghost, autoTier = 0, onTier,
 }) {
   // Every client must generate the SAME field from the seed — obstacle count is
   // part of the shared-track contract (a lowPerf rival with fewer rocks would
   // fly through asteroids everyone else has to dodge). lowPerf economizes on
   // rendering (instanced, 2 draw calls) — never on the layout.
-  const obstacles = useMemo(() => genObstacles(seed || 1, 54), [seed]);
+  const obstacles = useMemo(() => genObstacles(seed || 1, 54, trackId), [seed, trackId]);
   const gateStateRef = useRef({ next: -1, finished: false });
   const padFxRef = useRef({});
   const fxRef = useRef([]);
+  const dimmed = lowPerf || autoTier > 0; // sheds cosmetic dynamic lights
 
   return (
     <>
@@ -1097,31 +1276,37 @@ export default function RaceScene({
           infiniteGrid
         />
       )}
-      <TrackRibbon />
-      <PulseRunners count={lowPerf ? 6 : 12} />
-      <StartArch />
-      {getTrack().gates.map((g) => (
-        <Gate key={g.idx} data={g} gateStateRef={gateStateRef} />
+      <TrackRibbon trackId={trackId} />
+      <PulseRunners count={lowPerf ? 6 : 12} trackId={trackId} />
+      <StartArch trackId={trackId} />
+      {getTrack(trackId).gates.map((g) => (
+        <Gate key={`${trackId}-${g.idx}`} data={g} gateStateRef={gateStateRef} />
       ))}
-      <BoostPads padFxRef={padFxRef} />
+      <BoostPads padFxRef={padFxRef} trackId={trackId} />
+      {pickupsRef && <PickupPods trackId={trackId} pickupsRef={pickupsRef} netRef={netRef} />}
       <ObstacleField obstacles={obstacles} />
       <ImpactBursts fxRef={fxRef} />
-      <RemoteFleet playersRef={playersRef} fleetVersion={fleetVersion} netRef={netRef} lowPerf={lowPerf} />
+      <RemoteFleet playersRef={playersRef} fleetVersion={fleetVersion} netRef={netRef} lowPerf={dimmed} />
+      {ghost && phase === 'racing' && !spectating && (
+        <GhostShip ghost={ghost} startAt={startAt} netRef={netRef} />
+      )}
 
       {spectating ? (
         <SpectatorRig playersRef={playersRef} />
       ) : (
         <LocalPilot
-          phase={phase} startAt={startAt} gridIndex={gridIndex} hue={selfHue} lowPerf={lowPerf}
+          phase={phase} startAt={startAt} trackId={trackId} gridIndex={gridIndex} hue={selfHue} lowPerf={lowPerf}
           control={control} playersRef={playersRef} obstacles={obstacles}
           shipStateRef={shipStateRef} telemetryRef={telemetryRef}
           gateStateRef={gateStateRef} padFxRef={padFxRef} fxRef={fxRef} netRef={netRef}
+          pickupsRef={pickupsRef} powerRef={powerRef}
           onGate={onGate} onFinish={onFinish}
         />
       )}
 
       {!spectating && <SpeedStreaks telemetryRef={telemetryRef} count={lowPerf ? 40 : 90} />}
-      {!lowPerf && <RaceEffects telemetryRef={telemetryRef} />}
+      {!lowPerf && autoTier < 2 && <RaceEffects telemetryRef={telemetryRef} />}
+      <FpsGovernor onTier={onTier} />
     </>
   );
 }

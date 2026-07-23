@@ -1,0 +1,35 @@
+# Render.com blueprint for the Nebula Grand Prix relay (free web service).
+#
+# IMPORTANT — where this file must live: Render only auto-reads blueprints
+# named `render.yaml` at the REPOSITORY ROOT. Either copy this file there, or
+# skip blueprints and create a "Web Service" by hand in the dashboard using
+# the same settings (runtime Docker, the dockerfile path below, health check
+# path /healthz).
+#
+# Paths below assume the repository root is the folder CONTAINING next-app/
+# (this repo's layout: lexdesk/next-app/...). If next-app IS your repo root,
+# drop the `next-app/` prefix from dockerfilePath and use `.` for
+# dockerContext.
+#
+# Health check: Render web services (free tier included) probe over HTTP, and
+# the bare relay (race-server/server.mjs) is WebSocket-only — it has no HTTP
+# handler, so Render would mark it dead. The image therefore runs
+# deploy/server-with-health.mjs, which answers 200 "ok" on GET /healthz and
+# mounts the WebSocket server on the same listener. Render injects PORT and
+# the server binds it automatically; wss:// works through Render's TLS proxy.
+#
+# Free-tier caveat: the service spins down after ~15 min without traffic; the
+# first racer to connect after that waits ~30-60 s while it cold-starts.
+
+services:
+  - type: web
+    name: nebula-race-relay
+    runtime: docker
+    plan: free
+    dockerfilePath: ./next-app/race-server/deploy/Dockerfile
+    dockerContext: ./next-app
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production

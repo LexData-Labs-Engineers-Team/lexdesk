@@ -23,7 +23,6 @@ if (process.argv.includes('--prod')) process.env.NODE_ENV = 'production';
 const { createServer } = await import('node:http');
 const { WebSocketServer } = await import('ws');
 const next = (await import('next')).default;
-const { createRaceEngine } = await import('./src/components/home/race/raceEngine.mjs');
 const { attachEngineToSocketServer } = await import('./race-server/bridge.mjs');
 
 const port = parseInt(process.env.PORT || '3000', 10);
@@ -39,10 +38,10 @@ const handleUpgrade = app.getUpgradeHandler();
 
 const server = createServer((req, res) => handle(req, res));
 
-// The arena engine + a no-listener WebSocket server fed by manual upgrades.
-const engine = createRaceEngine({ log: console.log });
+// The arena rooms + a no-listener WebSocket server fed by manual upgrades.
+// (One engine per ?room= query — private grids via ?race_room= on the page.)
 const raceWss = new WebSocketServer({ noServer: true });
-attachEngineToSocketServer(engine, raceWss);
+attachEngineToSocketServer(raceWss, { log: console.log });
 
 server.on('upgrade', (req, socket, head) => {
   let pathname = '/';

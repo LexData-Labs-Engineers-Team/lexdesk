@@ -9,6 +9,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import RoboAssistant from '@/components/RoboAssistant';
 import { getOrCreateWebDeviceId, webDeviceName } from '@/lib/deviceId';
+import { apiFetch } from '@/lib/apiFetch';
 import { FEATURES, APP_DOWNLOAD_URL } from '../content';
 import { STATIONS_BY_ID } from './stations';
 
@@ -299,6 +300,71 @@ function PulsePanel({ station, onBack }) {
   );
 }
 
+const TRACK_NAMES = ['Nebula Circuit', 'Ion Straits', 'Helix Falls'];
+const fmtLap = (ms) => {
+  const cs = Math.round(ms / 10);
+  return `${Math.floor(cs / 6000)}:${(((cs % 6000) / 100).toFixed(2)).padStart(5, '0')}`;
+};
+
+// Office GP leaderboard — season points + per-circuit lap records.
+function RaceLeaderboard() {
+  const [tab, setTab] = useState('standings');
+  const [data, setData] = useState(null);
+  useEffect(() => {
+    let on = true;
+    apiFetch('/api/race/leaderboard', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (on) setData(j); })
+      .catch(() => {});
+    return () => { on = false; };
+  }, []);
+  const empty = !data || (!data.standings?.length && !Object.values(data.bestLaps || {}).some((l) => l.length));
+  if (empty) return null;
+  return (
+    <div className="race-board">
+      <div className="race-board__tabs" role="tablist">
+        <button type="button" role="tab" aria-selected={tab === 'standings'} className={tab === 'standings' ? 'is-on' : ''} onClick={() => setTab('standings')}>
+          Season standings
+        </button>
+        <button type="button" role="tab" aria-selected={tab === 'laps'} className={tab === 'laps' ? 'is-on' : ''} onClick={() => setTab('laps')}>
+          Lap records
+        </button>
+      </div>
+      {tab === 'standings' ? (
+        <ol className="race-board__rows">
+          {(data.standings || []).slice(0, 5).map((r, i) => (
+            <li key={r.name}>
+              <span className="race-board__pos">{i + 1}</span>
+              <span className="race-board__name">{r.name}</span>
+              <span className="race-board__meta">{r.wins}W · {r.podiums}P</span>
+              <span className="race-board__pts">{r.points} pts</span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <div className="race-board__laps">
+          {TRACK_NAMES.map((name, tid) => {
+            const rows = data.bestLaps?.[tid] || data.bestLaps?.[String(tid)] || [];
+            if (!rows.length) return null;
+            return (
+              <div key={name} className="race-board__lapblock">
+                <span className="race-board__track">{name}</span>
+                {rows.slice(0, 3).map((r, i) => (
+                  <div key={`${r.name}${i}`} className="race-board__laprow">
+                    <span className="race-board__pos">{i + 1}</span>
+                    <span className="race-board__name">{r.name}</span>
+                    <span className="race-board__pts">{fmtLap(r.bestLapMs)}</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RacePanel({ station, onBack, onEnterRace }) {
   const [arena, setArena] = useState(undefined); // undefined = probing, null = offline
 
@@ -346,6 +412,7 @@ function RacePanel({ station, onBack, onEnterRace }) {
         <button type="button" className="btn-primary inline-flex px-7 py-3.5 text-[0.95rem]" onClick={onEnterRace}>
           {arena === null ? 'Enter practice' : 'Enter the arena'}
         </button>
+        <RaceLeaderboard />
       </div>
     </HudCard>
   );

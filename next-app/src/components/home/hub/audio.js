@@ -217,4 +217,45 @@ export const audio = {
     tone({ freq: 1318, dur: 0.4, type: 'triangle', gain: 0.12 });
     tone({ freq: 1318, dur: 0.4, type: 'triangle', gain: 0.1, delay: 0.22 });
   },
+  // a rival blows past at speed — filtered noise swelling then falling away
+  whoosh: () => {
+    const c = ensure();
+    if (!c || !master) return;
+    const t0 = c.currentTime;
+    const src = c.createBufferSource();
+    src.buffer = getNoise(c);
+    const bp = c.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 0.8;
+    bp.frequency.setValueAtTime(300, t0);
+    bp.frequency.exponentialRampToValueAtTime(1400, t0 + 0.12);
+    bp.frequency.exponentialRampToValueAtTime(200, t0 + 0.38);
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.12, t0 + 0.1);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.4);
+    src.connect(bp); bp.connect(g); g.connect(master);
+    src.start(t0);
+    src.stop(t0 + 0.42);
+  },
+  // shield arming / absorbing a hit — a glassy shimmer
+  shield: () => {
+    tone({ freq: 1568, dur: 0.22, type: 'sine', gain: 0.09 });
+    tone({ freq: 2093, dur: 0.3, type: 'sine', gain: 0.07, delay: 0.06 });
+  },
+  // EMP shock — a harsh falling zap
+  emp: () => {
+    tone({ freq: 1200, dur: 0.28, type: 'sawtooth', gain: 0.1, slideTo: 80 });
+    tone({ freq: 600, dur: 0.22, type: 'square', gain: 0.06, slideTo: 60 });
+  },
+  // gaining a place — a quick rising two-note
+  overtake: () => {
+    tone({ freq: 659, dur: 0.09, type: 'triangle', gain: 0.09 });
+    tone({ freq: 988, dur: 0.14, type: 'triangle', gain: 0.08, delay: 0.06 });
+  },
+  // losing a place — the inverse, softer
+  overtaken: () => {
+    tone({ freq: 659, dur: 0.09, type: 'sine', gain: 0.06 });
+    tone({ freq: 440, dur: 0.14, type: 'sine', gain: 0.06, delay: 0.06 });
+  },
 };

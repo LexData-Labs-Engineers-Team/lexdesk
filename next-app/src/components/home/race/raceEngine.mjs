@@ -23,7 +23,7 @@
 // their authority), publishing the same state shape humans do, so clients
 // render them with zero special-casing.
 
-import { getTrack, GATE_COUNT, LAPS } from './trackData.mjs';
+import { getTrack, GATE_COUNT, LAPS, TRACK_COUNT, dealPickupKinds } from './trackData.mjs';
 
 export const GRID_MAX = 8;              // ships on the grid; later arrivals spectate
 export const MIN_PILOTS = 2;            // the race will not arm below this
@@ -59,6 +59,7 @@ export function createRaceEngine({ bots = {}, log = () => {} } = {}) {
     countdownEndsAt: null, // armed: when the launch fires
     startAt: null,         // racing: when control unlocks (GO)
     seed: 1,
+    trackId: 0,            // which circuit — decided by lobby vote at launch
     grid: [],              // player ids locked onto the grid for this race
     finishOrder: [],       // ids in finish order
     firstFinishAt: null,
@@ -66,13 +67,19 @@ export function createRaceEngine({ bots = {}, log = () => {} } = {}) {
     // Podium rows captured the moment each pilot finishes — so a finisher who
     // disconnects before the flag still appears in the results (they earned it).
     finishedRows: new Map(),
+    // Pickup pods: kinds dealt from the seed at launch; takenUntil timestamps
+    // gate re-grabs (0 = available).
+    pickupKinds: [],
+    pickupTakenUntil: [],
   };
+
+  const PICKUP_RESPAWN_MS = 12_000;
 
   const LINGER_MS = 30_000;      // grace for a mid-race disconnect to resume
   const ARMED_JOIN_FLOOR_MS = 8_000; // late joiner always gets >= this much countdown
 
   function publicPlayer(p) {
-    return { id: p.id, name: p.name, hue: p.hue, ready: p.ready, spectator: p.spectator, finished: p.finished, place: p.place, bot: !!p.bot };
+    return { id: p.id, name: p.name, hue: p.hue, ready: p.ready, spectator: p.spectator, finished: p.finished, place: p.place, bot: !!p.bot, vote: p.voteTrack ?? null };
   }
 
   const roster = () => [...players.values()].map(publicPlayer);
@@ -110,8 +117,10 @@ export function createRaceEngine({ bots = {}, log = () => {} } = {}) {
       countdownEndsAt: room.countdownEndsAt,
       startAt: room.startAt,
       seed: room.seed,
+      trackId: room.trackId,
       grid: room.grid,
       results: room.results,
+      pickups: room.pickupTakenUntil,
       now: now(),
     };
   }
@@ -120,7 +129,8 @@ export function createRaceEngine({ bots = {}, log = () => {} } = {}) {
 
   /* ---------------------------------------------------------- AI pilots */
 
-  const track = getTrack(); // curve + samples + gates; identical on every host
+  // Always read the ROOM's circuit — the lobby vote can change it per race.
+  const curTrack = () => getTrack(room.trackId);
 
   function spawnBot() {
     const usedNames = new Set([...players.values()].map((p) => p.name));
@@ -141,7 +151,7 @@ export function createRaceEngine({ bots = {}, log = () => {} } = {}) {
       lap: 0,
       state: null,
       brain: {
-        dist: Math.random() * track.length,   // signed distance along the circuit
+        dist: Math.random() * curTrack().length, // signed distance along the circuit
         lat: 0,
         latPhase: Math.random() * Math.PI * 2,
         latFreq: 2 + Math.random() * 3,
@@ -183,6 +193,7 @@ export function createRaceEngine({ bots = {}, log = () => {} } = {}) {
   // motion lands in the same relay cadence as human state uplinks.
   function stepBots(dt) {
     const t0 = now();
+    const track = curTrack();
     const leaderProg = Math.max(0, ...humans().filter((h) => !h.spectator && !h.finished).map((h) => h.prog || 0));
     for (const p of players.values()) {
       if (!p.bot) continue;
@@ -291,15 +302,32 @@ export function createRaceEngine({ bots = {}, log = () => {} } = {}) {
     broadcast(phaseMsg());
   }
 
+  // The grid votes on the next circuit; majority wins, ties go to chance,
+  // silence keeps the current one.
+  function tallyTrackVote() {
+    const votes = [...players.values()]
+      .filter((p) => !p.bot && !p.spectator && Number.isInteger(p.voteTrack))
+      .map((p) => p.voteTrack);
+    if (!votes.length) return room.trackId;
+    const counts = new Map();
+    for (const v of votes) counts.set(v, (counts.get(v) || 0) + 1);
+    const top = Math.max(...counts.values());
+    const leaders = [...counts.entries()].filter(([, c]) => c === top).map(([t]) => t);
+    return leaders[Math.floor(Math.random() * leaders.length)];
+  }
+
   function startRace() {
     room.phase = 'racing';
     room.seed = (Math.floor(Math.random() * 0xffffffff)) >>> 0;
+    room.trackId = tallyTrackVote();
     room.startAt = now() + LAUNCH_LEAD_MS;
     room.countdownEndsAt = null;
     room.finishOrder = [];
     room.firstFinishAt = null;
     room.results = null;
     room.finishedRows.clear();
+    room.pickupKinds = dealPickupKinds(room.seed, room.trackId);
+    room.pickupTakenUntil = room.pickupKinds.map(() => 0);
     // Humans take grid slots first; bots fill what's left.
     const pilots = gridPilots().sort((a, b) => (a.bot === b.bot ? 0 : a.bot ? 1 : -1));
     room.grid = pilots.slice(0, GRID_MAX).map((p) => p.id);
@@ -313,6 +341,9 @@ export function createRaceEngine({ bots = {}, log = () => {} } = {}) {
       p.prog = 0;
       p.lap = 0;
       p.ready = p.bot ? true : false;
+      p.voteTrack = null; // votes are per-race
+      p._progAt = null;
+      p._progStrikes = 0;
       if (p.bot) p.brain.mode = 'cruise'; // re-pinned to the grid on first race tick
     }
     // Roster first (who is racing vs spectating), THEN the phase flip — so no
@@ -363,6 +394,8 @@ export function createRaceEngine({ bots = {}, log = () => {} } = {}) {
       p.timeMs = null;
       p.prog = 0;
       p.lap = 0;
+      p._progAt = null;
+      p._progStrikes = 0;
     }
     broadcast(phaseMsg());
     broadcast({ t: 'roster', players: roster() });
@@ -550,6 +583,30 @@ export function createRaceEngine({ bots = {}, log = () => {} } = {}) {
           broadcast({ t: 'player', player: publicPlayer(me) });
           break;
         }
+        case 'vote': {
+          // Circuit vote for the NEXT launch; only meaningful pre-race.
+          if (room.phase !== 'lobby' && room.phase !== 'armed') break;
+          me.voteTrack = Number.isInteger(m.track) && m.track >= 0 && m.track < TRACK_COUNT ? m.track : null;
+          broadcast({ t: 'player', player: publicPlayer(me) });
+          break;
+        }
+        case 'pickup': {
+          // A racer flew through a pod. Client-detected like pads/gates; the
+          // engine arbitrates only contention (first grab wins) + respawn.
+          if (room.phase !== 'racing' || me.spectator || me.finished) break;
+          const idx = m.idx | 0;
+          if (idx < 0 || idx >= room.pickupKinds.length) break;
+          if (now() < room.pickupTakenUntil[idx]) break; // already taken
+          room.pickupTakenUntil[idx] = now() + PICKUP_RESPAWN_MS;
+          const kind = room.pickupKinds[idx];
+          broadcast({ t: 'pickupTaken', idx, id: me.id, kind, until: room.pickupTakenUntil[idx], now: now() });
+          if (kind === 'emp' && me.state) {
+            // EMP detonates at the grabber's ship; every client applies the
+            // shock to itself if it's inside the blast and unshielded.
+            broadcast({ t: 'emp', id: me.id, x: me.state.x, y: me.state.y, z: me.state.z });
+          }
+          break;
+        }
         case 'state': {
           me.state = {
             x: clampNum(m.x, -500, 500), y: clampNum(m.y, -50, 120), z: clampNum(m.z, -500, 500),
@@ -559,8 +616,30 @@ export function createRaceEngine({ bots = {}, log = () => {} } = {}) {
             s: clampNum(m.s, -20, 60), b: !!m.b,
           };
           if (room.phase === 'racing' && !me.spectator && !me.finished) {
-            me.prog = clampNum(m.prog, 0, 10_000);
+            const t = now();
+            const claimed = clampNum(m.prog, 0, GATE_COUNT * LAPS + 1);
+            // Progress-rate ceiling: a legit ship at absolute top speed covers
+            // < 1 gate/s, so allow 1.6 with a burst allowance. Faster growth is
+            // a doctored client — clamp it instead of relaying it, so cheated
+            // prog can't climb the standings or unlock the finish guard.
+            // (Position is NOT rate-checked: respawns teleport legitimately.)
+            if (me._progAt) {
+              const dt = Math.max(0.01, (t - me._progAt) / 1000);
+              const ceiling = me.prog + 1.6 * dt + 0.5;
+              if (claimed > ceiling) {
+                me.prog = ceiling;
+                me._progStrikes = (me._progStrikes || 0) + 1;
+                if (me._progStrikes === 10) log(`[race] ! ${me.name} (#${me.id}) repeatedly over the progress ceiling — clamping`);
+              } else {
+                me.prog = claimed;
+              }
+            } else {
+              me.prog = Math.min(claimed, 1.5); // first sample of the race starts near the line
+            }
+            me._progAt = t;
             me.lap = clampNum(m.lap, 0, 50) | 0;
+          } else {
+            me._progAt = null;
           }
           break;
         }

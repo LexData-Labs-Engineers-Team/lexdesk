@@ -23,13 +23,31 @@ const RECONNECT_DELAYS = [700, 1400, 2800, 5000, 8000]; // then give up → 'clo
 
 let knownGoodUrl = null;
 
+// Private arenas: add ?race_room=<name> to the page URL and everyone on that
+// link races in their own room, invisible to the default grid. Letters,
+// digits and dashes only; anything else collapses to the default room.
+export function getRaceRoom() {
+  if (typeof window === 'undefined') return '';
+  try {
+    const raw = new URLSearchParams(window.location.search).get('race_room') || '';
+    return raw.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 24);
+  } catch {
+    return '';
+  }
+}
+
+const withRoom = (url) => {
+  const room = getRaceRoom();
+  return room ? `${url}${url.includes('?') ? '&' : '?'}room=${encodeURIComponent(room)}` : url;
+};
+
 export function raceWsCandidates() {
   const list = [];
-  if (process.env.NEXT_PUBLIC_RACE_WS_URL) list.push(process.env.NEXT_PUBLIC_RACE_WS_URL);
+  if (process.env.NEXT_PUBLIC_RACE_WS_URL) list.push(withRoom(process.env.NEXT_PUBLIC_RACE_WS_URL));
   if (typeof window !== 'undefined') {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    list.push(`${proto}//${window.location.host}/race-ws`);
-    list.push(`${proto}//${window.location.hostname}:${LEGACY_PORT}`);
+    list.push(withRoom(`${proto}//${window.location.host}/race-ws`));
+    list.push(withRoom(`${proto}//${window.location.hostname}:${LEGACY_PORT}`));
   } else {
     list.push(`ws://localhost:3000/race-ws`, `ws://localhost:${LEGACY_PORT}`);
   }

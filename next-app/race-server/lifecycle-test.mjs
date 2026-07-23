@@ -44,7 +44,7 @@ function pilot(name, hue, rk = null) {
         break;
       case 'phase':
         p.phase = m.phase;
-        if (m.phase === 'racing') { p.startAt = m.startAt; p.seed = m.seed; p.grid = m.grid; }
+        if (m.phase === 'racing') { p.startAt = m.startAt; p.seed = m.seed; p.grid = m.grid; p.trackId = m.trackId; }
         if (m.phase === 'results') p.resultsSeen = m.results;
         break;
       case 'snap': {
@@ -88,12 +88,16 @@ expect(A.id !== B.id, `distinct ids (${A.id}, ${B.id})`);
 await until(() => A.players.some((x) => x.bot), 'AI pilots joined the lobby', 8000);
 expect(A.players.filter((x) => x.bot).length >= 2, `bots on the grid (${A.players.filter((x) => x.bot).length})`);
 
+// A votes for circuit 1 (Ion Straits) — sole ballot must win the tally
+A.ws.send(JSON.stringify({ t: 'vote', track: 1 }));
+
 // both ready → countdown should shorten and launch within ~7s
 A.ws.send(JSON.stringify({ t: 'ready', on: true }));
 B.ws.send(JSON.stringify({ t: 'ready', on: true }));
 await until(() => A.phase === 'armed' || A.phase === 'racing', 'grid armed');
 await until(() => A.phase === 'racing' && B.phase === 'racing', 'race started (all-ready shortcut)', 25000);
 expect(A.seed === B.seed, `same obstacle seed (${A.seed})`);
+expect(A.trackId === 1 && B.trackId === 1, `circuit vote honored (track ${A.trackId})`);
 expect(Array.isArray(A.grid) && A.grid.includes(A.id) && A.grid.includes(B.id), 'both humans on the grid');
 
 // stream state so the relay has something to broadcast; wait for GO. Progress
@@ -101,7 +105,9 @@ expect(Array.isArray(A.grid) && A.grid.includes(A.id) && A.grid.includes(B.id), 
 const t0 = Date.now();
 const streamers = [A, B]; // mutated when A resumes on a new socket
 const stream = setInterval(() => {
-  const prog = Math.min(35.9, ((Date.now() - t0) / 1000) * 4); // ~9s to "complete"
+  // ~1.2 gates/s — must stay under the engine's anti-cheat progress ceiling
+  // (1.6/s) or the relay clamps us and the finish guard rejects the run.
+  const prog = Math.min(35.9, ((Date.now() - t0) / 1000) * 1.2); // ~30s to "complete"
   for (const p of streamers) {
     if (p.ws.readyState === 1) {
       p.ws.send(JSON.stringify({ t: 'state', x: 0, y: 2, z: -78, h: 0, k: 0, s: 20, b: false, prog, lap: Math.min(2, Math.floor(prog / 12)) }));
@@ -136,7 +142,7 @@ expect(S.spectator === true, 'mid-race joiner spectates');
 S.ws.close();
 
 // wait until the ramp crosses the plausibility threshold, then finish
-await until(() => ((Date.now() - t0) / 1000) * 4 >= 34.8, 'prog ramp complete', 15000);
+await until(() => ((Date.now() - t0) / 1000) * 1.2 >= 34.8, 'prog ramp complete', 45000);
 await sleep(500);
 B.ws.send(JSON.stringify({ t: 'finish' }));
 await until(() => B.finishedMsg, 'B finish acknowledged');

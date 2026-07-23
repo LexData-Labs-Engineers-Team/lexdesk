@@ -1,0 +1,44 @@
+# Fly.io config for the Nebula Grand Prix relay.
+#
+# Deploy FROM THE next-app DIRECTORY so the Docker build context contains
+# both race-server/ and src/:
+#
+#   cd next-app
+#   flyctl apps create <your-unique-app-name>       # then set `app` below
+#   flyctl deploy --config race-server/deploy/fly.toml --dockerfile race-server/deploy/Dockerfile .
+#
+# WebSockets pass through Fly's edge proxy untouched — wss://<app>.fly.dev
+# works with zero extra config (TLS terminates at the edge, plain ws inside).
+#
+# auto_stop is OFF and one machine stays warm: a race in progress must never
+# have its machine reaped mid-lap, and the engine keeps lobby timers in
+# memory. (Older flyctl versions want `auto_stop_machines = false` — boolean —
+# instead of "off".)
+
+app = "nebula-race-relay"   # must be globally unique — change me
+primary_region = "sin"      # nearest region to your players (sin = Singapore)
+
+[build]
+  dockerfile = "race-server/deploy/Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  RACE_PORT = "3990"
+
+[http_service]
+  internal_port = 3990
+  force_https = true
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/healthz"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

@@ -8,12 +8,10 @@
 //   npm run race:server        (port 3990, override with RACE_PORT)
 
 import { WebSocketServer } from 'ws';
-import { createRaceEngine } from '../src/components/home/race/raceEngine.mjs';
 import { attachEngineToSocketServer } from './bridge.mjs';
 
 const PORT = parseInt(process.env.RACE_PORT || '3990', 10);
 
-const engine = createRaceEngine({ log: console.log });
 const wss = new WebSocketServer({ port: PORT });
 wss.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
@@ -22,5 +20,5 @@ wss.on('error', (err) => {
   }
   throw err;
 });
-attachEngineToSocketServer(engine, wss);
+attachEngineToSocketServer(wss, { log: console.log });
 console.log(`[race] Nebula Grand Prix relay listening on :${PORT}`);

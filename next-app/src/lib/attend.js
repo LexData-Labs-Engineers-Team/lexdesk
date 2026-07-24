@@ -239,7 +239,7 @@ export function approvedLeaveDays(leave, holidays, year, opts = {}) {
 
 // Classify every day of a month for ONE employee. `events` must already be that
 // employee's attendance events (e.g. from /api/me/attendance). Returns
-// { year, month, daysInMonth, firstWeekday, days: { [d]: { status, name?, subject? } }, counts }.
+// { year, month, daysInMonth, firstWeekday, days: { [d]: { status, name?, subject?, leaveType?, halfDayPeriod? } }, counts }.
 // status ∈ 'ontime' | 'late' | 'holiday' | 'leave' | 'missed' | 'future' | 'today'.
 // Precedence (actual + known-ahead events win): a real check-in → holiday
 // (Friday/custom) → approved leave → future/today/missed.
@@ -276,6 +276,8 @@ export function employeeCalendarMonth(events, leave, holidays, year, month, opts
         if (lv) {
           status = 'leave';
           meta.subject = lv.subject || 'Leave';
+          meta.leaveType = lv.leaveType || null;
+          meta.halfDayPeriod = lv.halfDayPeriod || null;
         } else if (key > todayKey) {
           status = 'future';
         } else if (key === todayKey) {

@@ -8,6 +8,17 @@ import { useAttendData } from '@/lib/useAttendData';
 import { apiFetch } from '@/lib/apiFetch';
 import { perEmployeeStats, onlyStaff, inBdMonth } from '@/lib/attend';
 
+// Order members by employee ID ascending (lowest number first). IDs that are
+// missing or non-numeric sort last; name breaks ties.
+const byEmployeeId = (a, b) => {
+  const na = parseInt(a.employeeId, 10);
+  const nb = parseInt(b.employeeId, 10);
+  const va = Number.isNaN(na) ? Infinity : na;
+  const vb = Number.isNaN(nb) ? Infinity : nb;
+  if (va !== vb) return va - vb;
+  return (a.name || '').localeCompare(b.name || '');
+};
+
 // Self-contained org-wide attendance calendar (month nav + KPI roll-up +
 // member × day matrix) for admin/superadmin surfaces. Fetches its own data
 // through the admin-gated /api/attenddesk proxy, so it can be dropped into any
@@ -38,7 +49,7 @@ export default function OrgAttendanceCalendar() {
   // People page manages.
   const stats = useMemo(() => perEmployeeStats(monthEvents), [monthEvents]);
   const members = useMemo(
-    () => onlyStaff(employees).sort((a, b) => (a.name || '').localeCompare(b.name || '')),
+    () => onlyStaff(employees).sort(byEmployeeId),
     [employees],
   );
   const totals = useMemo(

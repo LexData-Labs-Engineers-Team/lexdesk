@@ -3,10 +3,12 @@
 import { useState } from 'react';
 import MyDashboardView from '@/components/MyDashboardView';
 import OrgAttendanceCalendar from '@/components/attendance/OrgAttendanceCalendar';
+import OrgTeamLeaveSummary from '@/components/attendance/OrgTeamLeaveSummary';
 
-// Superadmin / admin landing dashboard. Two tabs: "Overview" mirrors the
-// employee / team-leader dashboard (MyDashboardView — same component, so the
-// two stay in sync), "Team Attendance" is the org-wide member × day calendar.
+// Superadmin / admin landing dashboard. Tabs: "Overview" mirrors the employee /
+// team-leader dashboard (MyDashboardView — same component, so the two stay in
+// sync), "Team Attendance" is the org-wide member × day calendar, and "Team
+// Leave" is the org-wide yearly per-employee leave summary.
 export default function DashboardPage() {
   const [tab, setTab] = useState('overview');
   return (
@@ -15,6 +17,7 @@ export default function DashboardPage() {
         {[
           { key: 'overview', label: 'Overview' },
           { key: 'attendance', label: 'Team Attendance' },
+          { key: 'leave', label: 'Team Leave' },
         ].map((t) => (
           <button
             key={t.key}
@@ -29,7 +32,7 @@ export default function DashboardPage() {
           </button>
         ))}
       </div>
-      {tab === 'overview' ? <MyDashboardView /> : <OrgAttendanceCalendar />}
+      {tab === 'overview' ? <MyDashboardView /> : tab === 'attendance' ? <OrgAttendanceCalendar /> : <OrgTeamLeaveSummary />}
     </div>
   );
 }

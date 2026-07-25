@@ -6,6 +6,7 @@ import MonthNav from '@/components/MonthNav';
 import KpiCard from '@/components/KpiCard';
 import MemberCard from '@/components/people/MemberCard';
 import AttendanceCalendarMatrix from '@/components/attendance/AttendanceCalendarMatrix';
+import TeamLeaveSummary from '@/components/attendance/TeamLeaveSummary';
 import { apiFetch } from '@/lib/apiFetch';
 import { perEmployeeStats, isLateCheckIn, fmtTime, inBdMonth } from '@/lib/attend';
 
@@ -16,6 +17,17 @@ const FILTERS = [
   { key: 'late', label: 'Late' },
 ];
 const PAGE_SIZE = 25;
+
+// Order members by employee ID ascending (lowest number first). IDs that are
+// missing or non-numeric sort last; name breaks ties.
+const byEmployeeId = (a, b) => {
+  const na = parseInt(a.employeeId, 10);
+  const nb = parseInt(b.employeeId, 10);
+  const va = Number.isNaN(na) ? Infinity : na;
+  const vb = Number.isNaN(nb) ? Infinity : nb;
+  if (va !== vb) return va - vb;
+  return (a.name || '').localeCompare(b.name || '');
+};
 
 // Normalize a stored date (plain 'YYYY-MM-DD' or a full ISO timestamp like the
 // account createdAt) to the 'YYYY-MM-DD' value an <input type="date"> expects.
@@ -119,7 +131,7 @@ export default function TeamAttendancePage() {
   const rows = useMemo(
     () =>
       [...members]
-        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        .sort(byEmployeeId)
         .map((m) => ({ ...m, ...(stats[m.id] || { presentDays: 0, lateDays: 0, onTimeDays: 0, lastCheckIn: 0 }) })),
     [members, stats],
   );
@@ -352,6 +364,7 @@ export default function TeamAttendancePage() {
         {[
           { key: 'members', label: 'Team Members' },
           { key: 'attendance', label: 'Team Attendance' },
+          { key: 'leave', label: 'Team Leave' },
           { key: 'activity', label: 'Activity log' },
         ].map((t) => (
           <button
@@ -593,6 +606,14 @@ export default function TeamAttendancePage() {
             emptyText="No members in your team yet."
           />
         </div>
+      ) : tab === 'leave' ? (
+        <TeamLeaveSummary
+          members={rows}
+          leave={leave}
+          holidays={holidays}
+          year={ym.y}
+          onYearChange={(y) => setYm((prev) => ({ ...prev, y }))}
+        />
       ) : (
         <div className="flex flex-col gap-6">
           <h2 className="text-base font-semibold text-[var(--color-text-main)]">Activity log · {new Date(ym.y, ym.m, 1).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h2>

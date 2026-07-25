@@ -109,6 +109,47 @@ export function perEmployeeStats(events) {
   return out;
 }
 
+// Per-month "leave taken" day counts for ONE employee's APPROVED requests,
+// grouped by leaveType, in a given year. Same accounting as approvedLeaveDays:
+// weekly-off (Fri/Sat) and custom holidays are excluded. Returns
+// { [leaveType]: number[12] } (index 0 = January).
+export function leaveDaysByMonth(leave, holidays, year, opts = {}) {
+  const weeklyOff = opts.weeklyOff || WEEKLY_OFF;
+  const yr = String(year);
+  const byType = {};
+  for (const r of leave || []) {
+    if (r?.status !== 'approved' || !r.fromDay || !r.toDay) continue;
+    const type = r.leaveType || 'Other';
+    const start = new Date(`${r.fromDay}T00:00:00`);
+    const end = new Date(`${r.toDay}T00:00:00`);
+    if (isNaN(start.getTime()) || isNaN(end.getTime()) || end < start) continue;
+    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+      if (String(d.getFullYear()) !== yr) continue;
+      if (weeklyOff.includes(d.getDay())) continue; // weekly off
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (holidayCovers(holidays, key)) continue; // custom holiday
+      (byType[type] ||= new Array(12).fill(0))[d.getMonth()] += 1;
+    }
+  }
+  return byType;
+}
+
+// Per-month late-check-in and early-check-out day counts for ONE user's events
+// in a given year (office-tz, canonical day collapse). Returns
+// { late: number[12], early: number[12] } (index 0 = January).
+export function lateEarlyDaysByMonth(events, year) {
+  const days = canonicalDays(events);
+  const late = new Array(12).fill(0);
+  const early = new Array(12).fill(0);
+  for (const key of Object.keys(days)) {
+    const [y, m] = key.split('-').map(Number);
+    if (y !== year) continue;
+    if (days[key].firstCheckIn?.isLate) late[m - 1] += 1;
+    if (days[key].lastCheckOut?.isEarly) early[m - 1] += 1;
+  }
+  return { late, early };
+}
+
 // Today (office-tz date), canonical: distinct employees whose FIRST passed
 // check-in today exists / is late.
 export function todaySummary(events) {

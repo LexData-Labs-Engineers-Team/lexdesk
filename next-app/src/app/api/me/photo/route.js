@@ -4,12 +4,17 @@ import { uploadPhoto } from '@/lib/backend';
 
 export const dynamic = 'force-dynamic';
 
-// Upload the signed-in user's own profile photo to AttendDesk (Firebase Storage).
-// Email comes from the verified token, so a user can only set their own photo.
+// Upload the signed-in user's own profile photo to Firebase Storage. The uid
+// comes from the verified token, so a user can only set their own photo.
 export async function POST(request) {
   const user = getUserFromRequest(request);
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-  if (!user.email) return NextResponse.json({ error: 'no_email_on_account' }, { status: 400 });
+  if (!user.id) return NextResponse.json({ error: 'no_linked_attenddesk_user' }, { status: 400 });
+  // The env system admin has no employee row and no Firebase account, so a photo
+  // would write a Storage object nothing ever reads plus a 0-row UPDATE.
+  if (user.id === 'sysadmin') {
+    return NextResponse.json({ error: 'The system admin account has no employee profile.' }, { status: 400 });
+  }
 
   let body;
   try {
@@ -23,7 +28,7 @@ export async function POST(request) {
   }
 
   try {
-    const data = await uploadPhoto(user.email, dataUrl, user.orgId);
+    const data = await uploadPhoto(user.id, dataUrl, user.orgId);
     return NextResponse.json(data);
   } catch (err) {
     return NextResponse.json({ error: err.message, upstream: err.body ?? null }, { status: err.status || 502 });

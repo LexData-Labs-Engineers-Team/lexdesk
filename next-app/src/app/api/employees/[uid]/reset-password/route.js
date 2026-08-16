@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getUserFromRequest } from '@/lib/auth';
-import { getEmployee, resetUserPassword } from '@/lib/backend';
+import { getEmployee, resetUserPassword, writeAuditLog } from '@/lib/backend';
 
 export const dynamic = 'force-dynamic';
 
@@ -48,11 +48,16 @@ export async function POST(request, ctx) {
   if (!emp.email) return NextResponse.json({ error: 'This user has no email on file.' }, { status: 400 });
 
   try {
-    const result = await resetUserPassword(emp.email, user.orgId);
+    // Pass the uid we already have — never round-trip through the email, which
+    // can drift from the Firebase Auth record.
+    const result = await resetUserPassword(uid, user.orgId);
+    await writeAuditLog(user.orgId, user.id, 'reset_password', uid, { targetRole });
     return NextResponse.json({ ...result, name: emp.name || null });
   } catch (err) {
+    // `code` lets the client distinguish a missing sign-in account (which a Dev
+    // can repair) from an ordinary failure.
     return NextResponse.json(
-      { error: err.message, upstream: err.body ?? null },
+      { error: err.message, code: err.code ?? null, upstream: err.body ?? null },
       { status: err.status || 502 },
     );
   }

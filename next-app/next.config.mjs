@@ -1,5 +1,17 @@
+import { fileURLToPath } from 'node:url';
+import { dirname } from 'node:path';
+
+// Pin the workspace root to THIS directory, where node_modules actually lives.
+// Next infers the root from lockfiles; when it guessed the repo root instead,
+// Turbopack could not find the Next.js package and panicked on every rebuild
+// ("Failed to write app endpoint /page — Next.js package not found"). The page
+// endpoint then never got written, so the dev server reload-looped at ~33 req/s,
+// pegging CPU and inflating .next to gigabytes. Explicit beats inferred here.
+const projectRoot = dirname(fileURLToPath(import.meta.url));
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  turbopack: { root: projectRoot },
   // firebase-admin must NOT be bundled by Turbopack — its native/optional deps
   // (gRPC, etc.) break in the bundled output and crash route handlers at
   // runtime on Vercel (works in `next dev`, 500s in production). Externalizing

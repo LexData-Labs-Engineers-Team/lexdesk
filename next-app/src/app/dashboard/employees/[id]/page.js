@@ -37,6 +37,9 @@ export default function EmployeeProfilePage() {
   const [faceMsg, setFaceMsg] = useState(null); // { ok, text }
   const [devResetting, setDevResetting] = useState(false);
   const [devMsg, setDevMsg] = useState(null); // { ok, text }
+  const [editDraft, setEditDraft] = useState(null); // null until an employee loads
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editMsg, setEditMsg] = useState(null); // { ok, text }
   const [ipDraft, setIpDraft] = useState('');
   const [savingIps, setSavingIps] = useState(false);
   const [ipMsg, setIpMsg] = useState(null); // { ok, text }
@@ -197,6 +200,71 @@ export default function EmployeeProfilePage() {
     setIpSync({ id: employeeId, ips: savedIps });
     setIpDraft(savedIps);
   }
+
+  // Same reset-during-render sync for the Dev edit form: refill the draft when a
+  // different employee loads, or when a save round-trips new values back.
+  const editKey = employee
+    ? [employee.name, employee.email, employee.employeeId, employee.designation, employee.department, employee.contactNumber, employee.birthDate, employee.joiningDate, employee.role].join(' ')
+    : '';
+  const [editSync, setEditSync] = useState({ id: null, key: '' });
+  if (employee && (editSync.id !== employeeId || editSync.key !== editKey)) {
+    setEditSync({ id: employeeId, key: editKey });
+    setEditDraft({
+      name: employee.name || '',
+      email: employee.email || '',
+      employeeId: employee.employeeId || '',
+      designation: employee.designation || '',
+      department: employee.department || '',
+      contactNumber: employee.contactNumber || '',
+      birthDate: employee.birthDate || '',
+      joiningDate: employee.joiningDate || '',
+      role: String(employee.role || 'EMPLOYEE').toUpperCase(),
+    });
+  }
+
+  // Dev-only, and only for ordinary staff — the server enforces both.
+  const targetRole = String(employee?.role || '').toUpperCase();
+  const canDevEdit = isDevViewer
+    && (targetRole === 'EMPLOYEE' || targetRole === 'IT_TEAM')
+    && String(employeeId) !== String(currentUserId);
+
+  const saveDevEdit = async (e) => {
+    e.preventDefault();
+    if (!editDraft?.name.trim()) { setEditMsg({ ok: false, text: 'Name is required.' }); return; }
+    setSavingEdit(true);
+    setEditMsg(null);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/employees/${encodeURIComponent(employeeId)}/profile`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          name: editDraft.name.trim(),
+          email: editDraft.email.trim(),
+          employeeId: editDraft.employeeId.trim(),
+          designation: editDraft.designation.trim(),
+          department: editDraft.department.trim(),
+          contactNumber: editDraft.contactNumber.trim(),
+          birthDate: editDraft.birthDate,
+          joiningDate: editDraft.joiningDate,
+          role: editDraft.role,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      setEditMsg({
+        ok: true,
+        text: json.changed?.length
+          ? `Saved${json.sessionsRevoked ? ' — they must sign in again (email or role changed).' : '.'}`
+          : 'Nothing to change.',
+      });
+      refresh();
+    } catch (err) {
+      setEditMsg({ ok: false, text: err.message });
+    } finally {
+      setSavingEdit(false);
+    }
+  };
 
   const handleResetDevices = async () => {
     if (!window.confirm(`Reset registered devices for ${employee?.name || 'this employee'}? They'll be able to sign in on new devices (up to 2).`)) return;
@@ -469,6 +537,65 @@ export default function EmployeeProfilePage() {
               </div>
             );
           })()}
+
+          {/* Dev-only profile editor. Includes the login email and role, which
+              are identity changes — the server re-checks the role ceiling and
+              revokes sessions when either moves. */}
+          {canDevEdit && editDraft && (
+            <form onSubmit={saveDevEdit} className="card flex flex-col gap-4">
+              <div>
+                <h3 className="font-semibold text-lg text-[var(--color-text-main)]">Edit profile</h3>
+                <p className="text-xs text-[var(--color-text-muted)] mt-1">
+                  Dev access. Changing the email or role signs this person out of all sessions.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {[
+                  { k: 'name', label: 'Full name', type: 'text', required: true },
+                  { k: 'email', label: 'Login email', type: 'email', required: true },
+                  { k: 'employeeId', label: 'Employee ID', type: 'text' },
+                  { k: 'designation', label: 'Designation', type: 'text' },
+                  { k: 'department', label: 'Department', type: 'text' },
+                  { k: 'contactNumber', label: 'Contact number', type: 'text' },
+                  { k: 'birthDate', label: 'Birth date', type: 'date' },
+                  { k: 'joiningDate', label: 'Joining date', type: 'date' },
+                ].map((f) => (
+                  <div key={f.k} className="flex flex-col gap-1.5">
+                    <label className="text-xs font-medium text-[var(--color-text-muted)]">{f.label}</label>
+                    <input
+                      type={f.type}
+                      required={f.required}
+                      value={editDraft[f.k]}
+                      onChange={(ev) => setEditDraft({ ...editDraft, [f.k]: ev.target.value })}
+                      className="bg-[var(--color-bg)] border border-[var(--color-card-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text-main)] focus:outline-none focus:border-[var(--color-purple)]"
+                    />
+                  </div>
+                ))}
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-medium text-[var(--color-text-muted)]">Role</label>
+                  <select
+                    value={editDraft.role}
+                    onChange={(ev) => setEditDraft({ ...editDraft, role: ev.target.value })}
+                    className="bg-[var(--color-bg)] border border-[var(--color-card-border)] rounded-lg px-3 py-2 text-sm text-[var(--color-text-main)] focus:outline-none focus:border-[var(--color-purple)]"
+                  >
+                    <option value="EMPLOYEE">Employee</option>
+                    <option value="IT_TEAM">IT Team</option>
+                    <option value="DEV">Dev</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button type="submit" disabled={savingEdit} className="btn-primary py-2 px-5 text-sm disabled:opacity-50">
+                  {savingEdit ? 'Saving…' : 'Save changes'}
+                </button>
+                {editMsg && (
+                  <span className={`text-sm ${editMsg.ok ? 'text-[var(--color-green)]' : 'text-[var(--color-red)]'}`}>{editMsg.text}</span>
+                )}
+              </div>
+            </form>
+          )}
 
           <div className="card overflow-hidden p-0">
             <div className="px-5 py-4 border-b border-[var(--color-card-border)]">

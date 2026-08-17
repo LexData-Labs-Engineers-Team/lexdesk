@@ -29,6 +29,16 @@ export default function HolidaysPanel() {
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState('');
+  // Same read-only split as NoticesPanel. COSMETIC ONLY — POST /api/holidays and
+  // DELETE /api/holidays/[id] already 403 for non-admins; GET is open by design
+  // so employees can render holidays on their calendar. Lazy init.
+  const [canManage] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const r = JSON.parse(localStorage.getItem('user') || 'null')?.role;
+      return r === 'admin' || r === 'superadmin' || r === 'dev';
+    } catch { return false; }
+  });
 
   const authHeader = () => ({ Authorization: `Bearer ${localStorage.getItem('token')}` });
 
@@ -103,13 +113,16 @@ export default function HolidaysPanel() {
     <div className="flex flex-col gap-6">
       <PageHeader
         title="Holidays"
-        subtitle="Custom company holidays — shown in light blue on every employee's calendar"
+        subtitle={canManage
+          ? "Custom company holidays — shown in light blue on every employee's calendar"
+          : 'Company holidays — these appear in light blue on your attendance calendar'}
         actions={<button onClick={load} className="btn-outline py-2 px-4 text-sm">Refresh</button>}
       />
 
       {feedback && <div className="card text-[var(--color-green)] text-sm">{feedback}</div>}
       {error && <div className="card text-[var(--color-red)] text-sm">{error}</div>}
 
+      {canManage && (<>
       <form onSubmit={add} className="card flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1.5">
           <label className="text-xs font-medium text-[var(--color-text-muted)]">From</label>
@@ -128,6 +141,7 @@ export default function HolidaysPanel() {
         </button>
       </form>
       {formError && <div className="text-sm text-[var(--color-red)] -mt-3">{formError}</div>}
+      </>)}
 
       <div className="card overflow-hidden p-0">
         <div className="overflow-x-auto">
@@ -136,7 +150,7 @@ export default function HolidaysPanel() {
               <tr className="text-left text-[var(--color-text-muted)] text-[11px] uppercase tracking-wider border-b border-[var(--color-card-border)]">
                 <th className="py-3 px-5 font-medium">Holiday</th>
                 <th className="py-3 px-5 font-medium">Date(s)</th>
-                <th className="py-3 px-5 font-medium text-right">Action</th>
+                {canManage && <th className="py-3 px-5 font-medium text-right">Action</th>}
               </tr>
             </thead>
             <tbody>
@@ -149,16 +163,20 @@ export default function HolidaysPanel() {
                     </span>
                   </td>
                   <td className="py-3.5 px-5 text-[var(--color-text-muted)] whitespace-nowrap">{fmtRange(h.fromDay, h.toDay)}</td>
-                  <td className="py-3.5 px-5 text-right">
-                    <button onClick={() => remove(h.id)} className="btn-outline py-1 px-3 text-xs text-[var(--color-red)]">Delete</button>
-                  </td>
+                  {canManage && (
+                    <td className="py-3.5 px-5 text-right">
+                      <button onClick={() => remove(h.id)} className="btn-outline py-1 px-3 text-xs text-[var(--color-red)]">Delete</button>
+                    </td>
+                  )}
                 </tr>
               ))}
               {!loading && holidays.length === 0 && (
-                <tr><td colSpan={3} className="py-12 text-center text-[var(--color-text-muted)]">No custom holidays yet. Add one above.</td></tr>
+                <tr><td colSpan={canManage ? 3 : 2} className="py-12 text-center text-[var(--color-text-muted)]">
+                  {canManage ? 'No custom holidays yet. Add one above.' : 'No company holidays have been added yet.'}
+                </td></tr>
               )}
               {loading && (
-                <tr><td colSpan={3} className="py-12 text-center text-[var(--color-text-muted)]">Loading…</td></tr>
+                <tr><td colSpan={canManage ? 3 : 2} className="py-12 text-center text-[var(--color-text-muted)]">Loading…</td></tr>
               )}
             </tbody>
           </table>

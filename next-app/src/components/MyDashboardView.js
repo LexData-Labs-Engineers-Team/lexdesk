@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
+import Link from 'next/link';
 import MonthNav from '@/components/MonthNav';
 import MonthCalendar from '@/components/MonthCalendar';
 import CheckInCard from '@/components/CheckInCard';
@@ -12,6 +13,19 @@ function timeFmt(ms) {
     return new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Dhaka', hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(ms));
   } catch {
     return '—';
+  }
+}
+
+// notices.created_at is timestamptz, so tsToIso gives a real Z-suffixed ISO
+// string — no naive-timestamp fixup needed, just pin the display to office tz.
+function dayFmt(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  try {
+    return new Intl.DateTimeFormat('en-US', { timeZone: 'Asia/Dhaka', day: 'numeric', month: 'short', year: 'numeric' }).format(d);
+  } catch {
+    return '';
   }
 }
 
@@ -36,6 +50,53 @@ function StatTile({ icon, label, value, tint = 'purple' }) {
         <p className="text-xs text-[var(--color-text-muted)] truncate">{label}</p>
         <p className="text-2xl font-bold text-[var(--color-text-main)] leading-tight">{value}</p>
       </div>
+    </div>
+  );
+}
+
+// Read-only announcements strip, rendered last on the dashboard. This view is
+// shared with /dashboard, so admins see it too — deliberate: they get to see what
+// they published without a role read here. Authoring stays on
+// /dashboard/noticeboard. The server already sorts pinned-first then newest, so
+// the top 3 are the right 3. Always rendered, even when empty: for an employee
+// this is the only place on the web that surfaces announcements, and a card that
+// disappears is a card nobody discovers.
+function NoticesCard({ notices, loading }) {
+  const top = (notices || []).slice(0, 3);
+  return (
+    <div className="card flex flex-col gap-4">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-base font-semibold text-[var(--color-text-main)]">Notice Board</h2>
+        <Link
+          href="/dashboard/noticeboard?tab=notices"
+          className="text-xs font-semibold text-[var(--color-purple)] no-underline hover:underline"
+        >
+          View all
+        </Link>
+      </div>
+      {loading && <p className="text-sm text-[var(--color-text-muted)]">Loading…</p>}
+      {!loading && top.length === 0 && (
+        <p className="text-sm text-[var(--color-text-muted)]">No announcements right now.</p>
+      )}
+      {top.length > 0 && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {top.map((n) => (
+            <div key={n.id} className="rounded-xl border border-[var(--color-card-border)] px-4 py-3 flex flex-col gap-1.5">
+              <div className="flex items-center gap-2 min-w-0">
+                {n.pinned && (
+                  <span className="text-[10px] uppercase font-semibold px-2 py-0.5 rounded-full bg-[rgba(124,58,237,0.15)] text-[var(--color-purple)] shrink-0">Pinned</span>
+                )}
+                <h3 className="text-sm font-semibold text-[var(--color-text-main)] truncate">{n.title}</h3>
+              </div>
+              {/* No whitespace-pre-wrap here: line-clamp switches the element to
+                  display:-webkit-box, where preserved newlines would eat both
+                  visible lines. Full text is one click away. */}
+              {n.body && <p className="text-xs text-[var(--color-text-muted)] line-clamp-2">{n.body}</p>}
+              <span className="text-[11px] text-[var(--color-text-muted)] mt-auto pt-1">{dayFmt(n.createdAt)}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -207,6 +268,7 @@ export default function MyDashboardPage() {
   const [holidays, setHolidays] = useState([]);
   const [remote, setRemote] = useState([]);
   const [assets, setAssets] = useState([]);
+  const [notices, setNotices] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [ym, setYm] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
@@ -217,12 +279,15 @@ export default function MyDashboardPage() {
     try {
       const token = localStorage.getItem('token');
       const headers = { Authorization: `Bearer ${token}` };
-      const [aRes, lRes, hRes, asRes, rRes] = await Promise.all([
+      const [aRes, lRes, hRes, asRes, rRes, nRes] = await Promise.all([
         apiFetch('/api/me/attendance?limit=1000', { headers, cache: 'no-store' }),
         apiFetch('/api/me/leave', { headers, cache: 'no-store' }),
         apiFetch('/api/holidays', { headers, cache: 'no-store' }),
         apiFetch('/api/me/asset', { headers, cache: 'no-store' }),
         apiFetch('/api/me/remote', { headers, cache: 'no-store' }),
+        // The path says /api/admin/ but its GET is open to any signed-in user by
+        // design — see the route's own comment. This is the read-only feed.
+        apiFetch('/api/admin/notices', { headers, cache: 'no-store' }),
       ]);
       const aJson = await aRes.json();
       if (!aRes.ok) throw new Error(aJson.error || `HTTP ${aRes.status}`);
@@ -231,6 +296,7 @@ export default function MyDashboardPage() {
       const hJson = await hRes.json(); if (hRes.ok) setHolidays(hJson.holidays || []);
       const asJson = await asRes.json(); if (asRes.ok) setAssets(asJson.requests || []);
       const rJson = await rRes.json(); if (rRes.ok) setRemote(rJson.requests || []);
+      const nJson = await nRes.json(); if (nRes.ok) setNotices(nJson.notices || []);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -348,6 +414,9 @@ export default function MyDashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* Row 3 — Announcements, last card on the dashboard. */}
+      <NoticesCard notices={notices} loading={loading} />
     </div>
   );
 }

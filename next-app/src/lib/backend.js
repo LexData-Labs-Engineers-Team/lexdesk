@@ -22,9 +22,10 @@ export {
   resetUserPassword,
   enrollFace,
   resetFace,
-  updateName,
   uploadPhoto,
   changePassword,
+  diagnoseAuthLink,
+  repairAuthAccount,
   writeAuditLog,
 } from './services/users';
 export { enforceLoginGuards, resetUserDevices, setUserLoginIps, isRestrictedRole, MAX_LOGIN_DEVICES } from './services/loginGuard';

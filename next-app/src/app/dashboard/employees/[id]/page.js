@@ -30,7 +30,8 @@ export default function EmployeeProfilePage() {
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetResult, setResetResult] = useState(null);
-  const [resetError, setResetError] = useState('');
+  const [resetError, setResetError] = useState(null); // { text, code }
+  const [repairing, setRepairing] = useState(false);
   const [copied, setCopied] = useState(false);
   const [faceResetting, setFaceResetting] = useState(false);
   const [faceMsg, setFaceMsg] = useState(null); // { ok, text }
@@ -64,6 +65,8 @@ export default function EmployeeProfilePage() {
     () => (employees || []).find((e) => String(e.id) === employeeId) || null,
     [employees, employeeId],
   );
+  // Cosmetic only — the repair endpoint enforces this server-side.
+  const isDevViewer = String(currentUserRole || '').toLowerCase() === 'dev';
   const stats = useMemo(
     () => perEmployeeStats(events)[employeeId] || { presentDays: 0, lateDays: 0, lastCheckIn: null },
     [events, employeeId],
@@ -113,7 +116,7 @@ export default function EmployeeProfilePage() {
 
   const confirmReset = async () => {
     setResetting(true);
-    setResetError('');
+    setResetError(null);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`/api/employees/${encodeURIComponent(employeeId)}/reset-password`, {
@@ -121,12 +124,36 @@ export default function EmployeeProfilePage() {
         headers: { Authorization: `Bearer ${token}` },
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+      // Keep the server's `code` — it tells us a missing sign-in account is
+      // repairable rather than just broken.
+      if (!res.ok) throw Object.assign(new Error(json.error || `HTTP ${res.status}`), { code: json.code ?? null });
       setResetResult({ email: json.email, temporaryPassword: json.temporaryPassword });
     } catch (e) {
-      setResetError(e.message);
+      setResetError({ text: e.message, code: e.code ?? null });
     } finally {
       setResetting(false);
+    }
+  };
+
+  // Dev-only: rebuild a missing Firebase Auth account at the same uid. On success
+  // we reuse the existing temp-password view of this modal.
+  const repairAuth = async () => {
+    setRepairing(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`/api/employees/${encodeURIComponent(employeeId)}/repair-auth`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(json.error || `HTTP ${res.status}`), { code: json.code ?? null });
+      setResetError(null);
+      setResetResult({ email: json.email, temporaryPassword: json.temporaryPassword });
+      refresh();
+    } catch (e) {
+      setResetError({ text: e.message, code: e.code ?? null });
+    } finally {
+      setRepairing(false);
     }
   };
   const copyResetPw = async () => {
@@ -138,7 +165,7 @@ export default function EmployeeProfilePage() {
       /* clipboard blocked — user can select manually */
     }
   };
-  const closeReset = () => { setResetOpen(false); setResetResult(null); setResetError(''); setCopied(false); };
+  const closeReset = () => { setResetOpen(false); setResetResult(null); setResetError(null); setCopied(false); };
 
   const handleResetFace = async () => {
     if (!window.confirm(`Reset face enrollment for ${employee?.name || 'this employee'}? They'll need to enroll their face again before face check-ins work.`)) return;
@@ -289,7 +316,24 @@ export default function EmployeeProfilePage() {
                 <p className="text-sm text-[var(--color-text-muted)]">
                   This generates a new temporary password for <span className="text-[var(--color-text-main)]">{employee?.name || 'this employee'}</span> and signs them out of all sessions.
                 </p>
-                {resetError && <div className="text-sm text-[var(--color-red)]">{resetError}</div>}
+                {resetError && (
+                  <div className="flex flex-col gap-2">
+                    <div className="text-sm text-[var(--color-red)]">{resetError.text}</div>
+                    {resetError.code === 'auth_account_missing' && (
+                      isDevViewer ? (
+                        <button
+                          onClick={repairAuth}
+                          disabled={repairing}
+                          className="btn-outline py-1.5 px-3 text-sm self-start disabled:opacity-50"
+                        >
+                          {repairing ? 'Repairing…' : 'Repair sign-in account'}
+                        </button>
+                      ) : (
+                        <div className="text-xs text-[var(--color-text-muted)]">Ask a Dev to repair this account.</div>
+                      )
+                    )}
+                  </div>
+                )}
                 <div className="flex gap-2 justify-end pt-1">
                   <button onClick={closeReset} disabled={resetting} className="btn-outline py-2 px-4 text-sm">Cancel</button>
                   <button onClick={confirmReset} disabled={resetting} className="btn-primary py-2 px-5 text-sm disabled:opacity-50">

@@ -15,10 +15,34 @@ function newTempPassword() {
   return crypto.randomBytes(8).toString('base64url');
 }
 
-async function resolveUid(email) {
-  const { auth } = firebaseAdmin();
-  const rec = await auth.getUserByEmail(String(email).toLowerCase());
-  return rec.uid;
+// Firebase Admin error code -> { friendly message, HTTP status, stable app code }.
+// Same shape as LOGIN_GUARD_MESSAGES in api/auth/login/route.js. A FirebaseAuthError
+// carries .code but no .status, so an unmapped one falls through every route's
+// `status: err.status || 502` and leaks the raw SDK sentence to the user.
+//
+// 'auth/user-not-found' is 409, not 404: the routes already use 404 for "not in
+// your organization", and the UI reads that as "this employee doesn't exist". The
+// row DOES exist — Neon and Firebase Auth disagree, which is a conflict.
+const FIREBASE_AUTH_ERRORS = {
+  'auth/user-not-found': {
+    status: 409,
+    code: 'auth_account_missing',
+    message: 'This employee has a profile but no sign-in account. A Dev can rebuild it from this page.',
+  },
+  'auth/email-already-exists': { status: 409, code: 'email_in_use', message: 'A user with that email already exists' },
+  'auth/uid-already-exists': { status: 409, code: 'uid_in_use', message: 'A sign-in account already exists for this user.' },
+  'auth/invalid-email': { status: 400, code: 'invalid_email', message: 'The email on file is not a valid address. Fix it, then try again.' },
+  'auth/invalid-password': { status: 400, code: 'weak_password', message: 'Password must be at least 6 characters.' },
+  'auth/too-many-requests': { status: 429, code: 'rate_limited', message: 'Too many attempts. Wait a minute and try again.' },
+};
+
+// Translate a FirebaseAuthError into a tagged Error the existing route handlers
+// render correctly. Unmapped codes (internal/network) pass through untouched so
+// they keep 502-ing — they genuinely are upstream failures.
+export function firebaseAuthError(err) {
+  const m = FIREBASE_AUTH_ERRORS[err?.code];
+  if (!m) return err;
+  return Object.assign(new Error(m.message), { status: m.status, code: m.code, cause: err });
 }
 
 // Maps a users row (snake_case pg columns) to the API/JSON contract shape.
@@ -87,41 +111,54 @@ export async function createEmployee(body, orgId) {
   try {
     record = await auth.createUser({ email, password: tempPassword, displayName: body.name, emailVerified: false });
   } catch (err) {
-    if (err?.code === 'auth/email-already-exists') {
-      throw Object.assign(new Error('A user with that email already exists'), { status: 409 });
+    throw firebaseAuthError(err);
+  }
+
+  // Everything past this point is compensated: if the row insert fails we delete
+  // the Auth account we just made, so the outcome is "nothing happened" rather
+  // than a claims-bearing Auth user with no users row (which /api/v1 would accept
+  // for ADMIN/DEV roles, since those are exempt from the login-device guard).
+  try {
+    let teamId = body.teamId ?? null;
+    let teamName = null;
+    if (teamId) {
+      const teamRows = await sql`SELECT name FROM teams WHERE id=${teamId} AND org_id=${orgId}`;
+      if (teamRows.length) teamName = teamRows[0].name ?? null;
+      else teamId = null;
     }
+
+    const { text, params } = buildInsert('users', {
+      firebaseUid: record.uid,
+      orgId,
+      email,
+      name: body.name,
+      role: body.role,
+      teamId,
+      teamName,
+      employeeId: body.employeeId ?? null,
+      designation: body.designation ?? null,
+      department: body.department ?? null,
+      contactNumber: body.contactNumber ?? null,
+      birthDate: body.birthDate ?? null,
+      joiningDate: body.joiningDate ?? null,
+      mustChangePassword: true,
+      faceEmbeddingB64: null,
+      faceEmbeddingModel: null,
+      faceEnrolledAt: null,
+    });
+    await sql.query(text, params);
+  } catch (err) {
+    try { await auth.deleteUser(record.uid); } catch { /* best-effort rollback */ }
     throw err;
   }
-  await auth.setCustomUserClaims(record.uid, { role: body.role, orgId, email });
 
-  let teamId = body.teamId ?? null;
-  let teamName = null;
-  if (teamId) {
-    const teamRows = await sql`SELECT name FROM teams WHERE id=${teamId} AND org_id=${orgId}`;
-    if (teamRows.length) teamName = teamRows[0].name ?? null;
-    else teamId = null;
-  }
-
-  const { text, params } = buildInsert('users', {
-    firebaseUid: record.uid,
-    orgId,
-    email,
-    name: body.name,
-    role: body.role,
-    teamId,
-    teamName,
-    employeeId: body.employeeId ?? null,
-    designation: body.designation ?? null,
-    department: body.department ?? null,
-    contactNumber: body.contactNumber ?? null,
-    birthDate: body.birthDate ?? null,
-    joiningDate: body.joiningDate ?? null,
-    mustChangePassword: true,
-    faceEmbeddingB64: null,
-    faceEmbeddingModel: null,
-    faceEnrolledAt: null,
-  });
-  await sql.query(text, params);
+  // Claims come after the row and are deliberately best-effort — the users row is
+  // the source of truth at login, and getMobileUser falls back to it when the
+  // token carries no role claim. Rolling the account back over a claims failure
+  // would leave the row behind and manufacture an orphan. Mirrors setEmployeeRole.
+  try {
+    await auth.setCustomUserClaims(record.uid, { role: body.role, orgId, email });
+  } catch { /* non-fatal */ }
 
   return {
     employee: { uid: record.uid, email, name: body.name, role: body.role, temporaryPassword: tempPassword },
@@ -204,25 +241,47 @@ export async function setEmployeeRole(uid, role, orgId) {
   return { ok: true, role: next };
 }
 
+// Row first, Auth second, inside a transaction. The old order (deleteUser then
+// DELETE) left a role-bearing users row with no sign-in account whenever the
+// second step failed — the exact orphan that repairAuthAccount exists to undo.
+// Now a failed Auth delete rolls the row back, and the worst case is an Auth
+// account with no row, which login already rejects.
+//
+// auth/user-not-found counts as success: the account is already gone, so this is
+// also the correct way to clear an orphaned row for someone who has left.
 export async function deleteEmployee(uid, orgId) {
   const { auth } = firebaseAdmin();
-  const existing = await sql`SELECT firebase_uid FROM users WHERE firebase_uid=${uid} AND org_id=${orgId}`;
-  if (!existing.length) throw Object.assign(new Error('not_found'), { status: 404 });
-  await auth.deleteUser(uid);
-  await sql`DELETE FROM users WHERE firebase_uid=${uid} AND org_id=${orgId}`;
+  await withTransaction(async (client) => {
+    const { rowCount } = await client.query(
+      'DELETE FROM users WHERE firebase_uid=$1 AND org_id=$2',
+      [uid, orgId],
+    );
+    if (!rowCount) throw Object.assign(new Error('not_found'), { status: 404 });
+    try {
+      await auth.deleteUser(uid);
+    } catch (err) {
+      if (err?.code !== 'auth/user-not-found') throw firebaseAuthError(err);
+    }
+  });
   return { ok: true };
 }
 
-export async function resetUserPassword(email, orgId) {
+// uid-keyed: the admin route already holds the target's firebase_uid, and
+// users.email can drift from the Auth record (migrated rows were never
+// normalized), so never round-trip through auth.getUserByEmail to re-derive it.
+export async function resetUserPassword(uid, orgId) {
   const { auth } = firebaseAdmin();
-  const uid = await resolveUid(email);
-  const existing = await sql`SELECT firebase_uid FROM users WHERE firebase_uid=${uid} AND org_id=${orgId}`;
+  const existing = await sql`SELECT email FROM users WHERE firebase_uid=${uid} AND org_id=${orgId}`;
   if (!existing.length) throw Object.assign(new Error('user_not_found'), { status: 404 });
   const tempPassword = newTempPassword();
-  await auth.updateUser(uid, { password: tempPassword });
-  await auth.revokeRefreshTokens(uid);
+  try {
+    await auth.updateUser(uid, { password: tempPassword });
+    await auth.revokeRefreshTokens(uid);
+  } catch (err) {
+    throw firebaseAuthError(err);
+  }
   await sql`UPDATE users SET must_change_password=true WHERE firebase_uid=${uid} AND org_id=${orgId}`;
-  return { email: String(email).toLowerCase(), temporaryPassword: tempPassword };
+  return { email: String(existing[0].email || '').toLowerCase(), temporaryPassword: tempPassword };
 }
 
 // One-time enroll: 409 if the user already has an embedding (admin reset clears it).
@@ -269,18 +328,12 @@ export async function resetFace(uid, orgId) {
   return { ok: true, wasEnrolled };
 }
 
-export async function updateName(email, name, orgId) {
-  const { auth } = firebaseAdmin();
-  const uid = await resolveUid(email);
-  await auth.updateUser(uid, { displayName: name });
-  await sql`UPDATE users SET name=${name} WHERE firebase_uid=${uid} AND org_id=${orgId}`;
-  return { ok: true, name };
-}
-
 const ALLOWED_PHOTO = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_PHOTO_BYTES = 2 * 1024 * 1024;
 
-export async function uploadPhoto(email, dataUrl, orgId) {
+// uid-keyed (the session JWT carries it). Touches Firebase Auth zero times —
+// matching the mobile twin at api/v1/me/photo/route.js.
+export async function uploadPhoto(uid, dataUrl, orgId) {
   const m = /^data:(image\/[a-z+]+);base64,(.+)$/i.exec(String(dataUrl).trim());
   if (!m) throw Object.assign(new Error('invalid_image'), { status: 400 });
   const contentType = m[1].toLowerCase();
@@ -289,20 +342,183 @@ export async function uploadPhoto(email, dataUrl, orgId) {
   if (bytes.length <= 0 || bytes.length > MAX_PHOTO_BYTES) {
     throw Object.assign(new Error('file_too_large'), { status: 413 });
   }
-  const uid = await resolveUid(email);
   const { storagePath } = await uploadUserPhoto(orgId, uid, bytes, contentType);
   await sql`UPDATE users SET photo_storage_path=${storagePath}, photo_updated_at=now() WHERE firebase_uid=${uid} AND org_id=${orgId}`;
   return { ok: true, photoUrl: await signedReadUrl(storagePath) };
 }
 
+// verifyFirebasePassword returns { uid, email } from Identity Toolkit, and that
+// uid is authoritative — the caller just proved they own that account. No second
+// lookup needed.
 export async function changePassword(email, currentPassword, newPassword) {
-  const ok = await verifyFirebasePassword(email, currentPassword);
-  if (!ok) throw Object.assign(new Error('Current password is incorrect'), { status: 400 });
+  const verified = await verifyFirebasePassword(email, currentPassword);
+  if (!verified) throw Object.assign(new Error('Current password is incorrect'), { status: 400 });
   const { auth } = firebaseAdmin();
-  const uid = await resolveUid(email);
-  await auth.updateUser(uid, { password: newPassword });
-  await auth.revokeRefreshTokens(uid);
+  try {
+    await auth.updateUser(verified.uid, { password: newPassword });
+    await auth.revokeRefreshTokens(verified.uid);
+  } catch (err) {
+    throw firebaseAuthError(err);
+  }
   return { ok: true };
+}
+
+// ---- Neon <-> Firebase Auth reconciliation ---------------------------------
+// A users row whose firebase_uid has no Firebase Auth account behind it (an
+// "orphan") breaks every Auth-touching admin action. repairAuthAccount rebuilds
+// the missing account AT THE SAME UID, so attendance_events.uid, team leadership,
+// face embeddings, login devices and the photo storage path (users/{orgId}/{uid})
+// all stay attached — there are no FK constraints to cascade (see db/schema.sql),
+// so allocating a new uid would silently orphan every one of them.
+//
+// SECURITY: uid, email, name and role are read back from the row and are NEVER
+// taken from the client. Web login resolves the caller's role from the users row
+// keyed by Firebase uid, so creating an account at a chosen uid mints credentials
+// carrying that row's role. Deriving everything from the row makes this strictly
+// a reconciliation of state the database already asserts. Callers must also apply
+// the target-role ceiling (enforced again below, defensively).
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+const REPAIRABLE_ROLES = new Set(['EMPLOYEE', 'IT_TEAM', 'DEV']);
+
+// Shared read for diagnose + repair. Returns the row plus its normalized email,
+// or throws the same tagged errors both paths need.
+async function loadAuthLinkTarget(uid, orgId) {
+  const rows = await sql`SELECT firebase_uid, email, name, role FROM users WHERE firebase_uid=${uid} AND org_id=${orgId}`;
+  if (rows.length !== 1) throw Object.assign(new Error('not_found'), { status: 404 });
+  const row = rows[0];
+  const email = String(row.email || '').trim().toLowerCase();
+  // users.email carries no unique constraint, so a collision would make any
+  // email-keyed decision ambiguous. Refuse rather than guess.
+  let duplicates = 0;
+  if (email) {
+    const dupes = await sql`SELECT firebase_uid FROM users WHERE org_id=${orgId} AND lower(trim(email))=${email}`;
+    duplicates = dupes.length;
+  }
+  return {
+    uid: row.firebase_uid,
+    email,
+    name: row.name ?? null,
+    role: String(row.role || '').toUpperCase(),
+    duplicates,
+  };
+}
+
+// Non-mutating. Drives the UI affordance and the admin's understanding of what
+// is actually wrong before they act.
+export async function diagnoseAuthLink(uid, orgId) {
+  const { auth } = firebaseAdmin();
+  const t = await loadAuthLinkTarget(uid, orgId);
+  const base = { uid: t.uid, email: t.email, name: t.name, role: t.role, authUid: null, authEmail: null, canRepair: false };
+
+  if (!t.email) return { ...base, state: 'no_email', detail: 'This profile has no email on file.' };
+  if (t.duplicates > 1) {
+    return { ...base, state: 'duplicate_email', detail: `${t.duplicates} profiles share this email — de-duplicate them first.` };
+  }
+
+  let rec = null;
+  try {
+    rec = await auth.getUser(t.uid);
+  } catch (err) {
+    if (err?.code !== 'auth/user-not-found') throw firebaseAuthError(err);
+  }
+
+  if (rec) {
+    const authEmail = String(rec.email || '');
+    if (authEmail.toLowerCase() !== t.email) {
+      // Harmless since nothing resolves accounts by email any more; reported so
+      // the mismatch is visible rather than silent.
+      return { ...base, state: 'email_skew', authUid: rec.uid, authEmail, detail: `Sign-in account exists, but its email is "${authEmail || '—'}".` };
+    }
+    return { ...base, state: 'ok', authUid: rec.uid, authEmail, detail: 'Profile and sign-in account are linked.' };
+  }
+
+  // No account at this uid. Is the email free?
+  try {
+    const other = await auth.getUserByEmail(t.email);
+    return {
+      ...base,
+      state: 'uid_conflict',
+      authUid: other.uid,
+      detail: `That email already belongs to a different sign-in account (${other.uid}). Fix the email on the profile first.`,
+    };
+  } catch (err) {
+    if (err?.code !== 'auth/user-not-found') throw firebaseAuthError(err);
+  }
+
+  return {
+    ...base,
+    state: 'missing',
+    canRepair: REPAIRABLE_ROLES.has(t.role),
+    detail: 'No sign-in account exists for this profile. It can be rebuilt at the same id.',
+  };
+}
+
+// Rebuild the missing Firebase Auth account. Creates only — it will NEVER call
+// auth.updateUser to set a password on an existing account, which would turn
+// repair into a password reset that bypasses the role ladder in the
+// reset-password route and make it strictly more powerful than that flow.
+export async function repairAuthAccount(uid, orgId) {
+  const { auth } = firebaseAdmin();
+  const t = await loadAuthLinkTarget(uid, orgId);
+
+  if (!t.email) throw Object.assign(new Error('This user has no email on file — add one before repairing.'), { status: 400, code: 'no_email' });
+  if (!EMAIL_RE.test(t.email)) throw Object.assign(new Error('The email on file is not a valid address. Fix it, then try again.'), { status: 400, code: 'invalid_email' });
+  if (t.duplicates > 1) throw Object.assign(new Error('Another profile shares this email. De-duplicate them before repairing.'), { status: 409, code: 'duplicate_email_rows' });
+  // Defence in depth — the route applies this ceiling too. Fails closed on an
+  // unknown or NULL role.
+  if (!REPAIRABLE_ROLES.has(t.role)) {
+    throw Object.assign(new Error('This account’s sign-in cannot be rebuilt here.'), { status: 403, code: 'unsupported_target_role' });
+  }
+
+  // Must genuinely have no account. A network/permission failure must never be
+  // read as "no account", so only auth/user-not-found continues.
+  let existing = null;
+  try {
+    existing = await auth.getUser(t.uid);
+  } catch (err) {
+    if (err?.code !== 'auth/user-not-found') throw firebaseAuthError(err);
+  }
+  if (existing) {
+    throw Object.assign(new Error('This employee already has a sign-in account. Use Reset password instead.'), { status: 409, code: 'auth_account_exists' });
+  }
+
+  // The email must be unclaimed. If it belongs to another uid the row's PK is
+  // stale (or the email is a typo pointing at a real person) — creating an
+  // account is the wrong remedy for both, so stop.
+  let emailOwner = null;
+  try {
+    emailOwner = await auth.getUserByEmail(t.email);
+  } catch (err) {
+    if (err?.code !== 'auth/user-not-found') throw firebaseAuthError(err);
+  }
+  if (emailOwner) {
+    throw Object.assign(
+      new Error(`That email already belongs to a different sign-in account (${emailOwner.uid}). Fix the email on the profile first.`),
+      { status: 409, code: 'email_bound_to_other_uid', body: { authUid: emailOwner.uid } },
+    );
+  }
+
+  const tempPassword = newTempPassword();
+  try {
+    await auth.createUser({
+      uid: t.uid,
+      email: t.email,
+      password: tempPassword,
+      displayName: t.name || undefined,
+      emailVerified: false,
+    });
+  } catch (err) {
+    throw firebaseAuthError(err);
+  }
+  // Best-effort, as in createEmployee: the account now exists, so failing the
+  // whole repair over claims would report failure for work that succeeded and
+  // leave the admin retrying into auth_account_exists.
+  try {
+    await auth.setCustomUserClaims(t.uid, { role: t.role, orgId, email: t.email });
+  } catch { /* non-fatal — users.role is the source of truth at login */ }
+  await sql`UPDATE users SET must_change_password=true WHERE firebase_uid=${t.uid} AND org_id=${orgId}`;
+
+  return { ok: true, action: 'created', uid: t.uid, email: t.email, name: t.name, role: t.role, temporaryPassword: tempPassword };
 }
 
 export async function writeAuditLog(orgId, actorUid, action, targetId, metadata) {

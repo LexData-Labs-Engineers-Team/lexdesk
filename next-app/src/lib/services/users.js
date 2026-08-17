@@ -45,6 +45,9 @@ export function firebaseAuthError(err) {
   return Object.assign(new Error(m.message), { status: m.status, code: m.code, cause: err });
 }
 
+// Shared by the email-change flow and the Auth-link repair below.
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
 // Maps a users row (snake_case pg columns) to the API/JSON contract shape.
 function userRow(row, photoUrl) {
   return {
@@ -363,6 +366,55 @@ export async function changePassword(email, currentPassword, newPassword) {
   return { ok: true };
 }
 
+// Change a user's login email. This is an IDENTITY change, not a profile edit:
+// the address is the Firebase Auth credential they sign in with and the one
+// password-reset mail goes to, so it lives in its own function with its own
+// guards rather than inside updateEmployee.
+//
+// Firebase first, then Neon: Firebase is the side that can reject a duplicate,
+// and since nothing resolves an account by email any more (resolveUid is gone),
+// a Neon failure afterwards leaves only a stale display value — which
+// scripts/audit-auth-links.mjs reports as EMAIL_SKEW. The reverse order could
+// hand out a login the database doesn't know about.
+export async function setEmployeeEmail(uid, email, orgId) {
+  const { auth } = firebaseAdmin();
+  const next = String(email ?? '').trim().toLowerCase();
+  if (!EMAIL_RE.test(next)) {
+    throw Object.assign(new Error('That is not a valid email address.'), { status: 400, code: 'invalid_email' });
+  }
+
+  const rows = await sql`SELECT email, role FROM users WHERE firebase_uid=${uid} AND org_id=${orgId}`;
+  if (!rows.length) throw Object.assign(new Error('not_found'), { status: 404 });
+  const current = String(rows[0].email || '').trim().toLowerCase();
+  if (current === next) return { ok: true, email: current, changed: false };
+
+  // users.email has no unique index, so guard the collision here rather than
+  // letting two rows silently share an address.
+  const clash = await sql`
+    SELECT firebase_uid FROM users
+    WHERE org_id=${orgId} AND lower(trim(email))=${next} AND firebase_uid <> ${uid}
+  `;
+  if (clash.length) {
+    throw Object.assign(new Error('Another employee already uses that email.'), { status: 409, code: 'email_in_use' });
+  }
+
+  try {
+    // emailVerified resets: the new address has not been proven yet.
+    await auth.updateUser(uid, { email: next, emailVerified: false });
+  } catch (err) {
+    throw firebaseAuthError(err);
+  }
+  await sql`UPDATE users SET email=${next} WHERE firebase_uid=${uid} AND org_id=${orgId}`;
+  // Claims embed the email, and the sign-in identity just changed, so drop
+  // existing sessions. Best-effort — the row is the source of truth at login.
+  try {
+    await auth.setCustomUserClaims(uid, { role: String(rows[0].role || '').toUpperCase(), orgId, email: next });
+    await auth.revokeRefreshTokens(uid);
+  } catch { /* non-fatal */ }
+
+  return { ok: true, email: next, changed: true, previousEmail: current || null };
+}
+
 // ---- Neon <-> Firebase Auth reconciliation ---------------------------------
 // A users row whose firebase_uid has no Firebase Auth account behind it (an
 // "orphan") breaks every Auth-touching admin action. repairAuthAccount rebuilds
@@ -377,7 +429,6 @@ export async function changePassword(email, currentPassword, newPassword) {
 // carrying that row's role. Deriving everything from the row makes this strictly
 // a reconciliation of state the database already asserts. Callers must also apply
 // the target-role ceiling (enforced again below, defensively).
-const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 const REPAIRABLE_ROLES = new Set(['EMPLOYEE', 'IT_TEAM', 'DEV']);
 
 // Shared read for diagnose + repair. Returns the row plus its normalized email,

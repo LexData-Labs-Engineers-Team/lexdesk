@@ -29,7 +29,9 @@ export default function DashboardLayout({ children }) {
       // Redirect employee to their allowed landing page
       if (parsed.role === 'employee') {
         const path = window.location.pathname;
-        const allowed = ['/dashboard/my-dashboard', '/dashboard/application', '/dashboard/team-approvals', '/dashboard/team-attendance', '/dashboard/profile'];
+        // Exact-match list. Every path the employee sidebar links to must appear
+        // here or a refresh on that page bounces them back to my-dashboard.
+        const allowed = ['/dashboard/my-dashboard', '/dashboard/application', '/dashboard/my-recon', '/dashboard/team-approvals', '/dashboard/team-attendance', '/dashboard/noticeboard', '/dashboard/profile'];
         if (!allowed.includes(path)) {
           router.replace('/dashboard/my-dashboard');
         }
@@ -37,7 +39,7 @@ export default function DashboardLayout({ children }) {
       // IT Team role — its own allowed sections (Accessories/Tracking added later).
       if (parsed.role === 'it_team') {
         const path = window.location.pathname;
-        const allowed = ['/dashboard/my-dashboard', '/dashboard/people', '/dashboard/attendance', '/dashboard/approvals', '/dashboard/accessories', '/dashboard/tracking', '/dashboard/my-recon', '/dashboard/profile'];
+        const allowed = ['/dashboard/my-dashboard', '/dashboard/people', '/dashboard/attendance', '/dashboard/approvals', '/dashboard/accessories', '/dashboard/tracking', '/dashboard/my-recon', '/dashboard/noticeboard', '/dashboard/profile'];
         if (!allowed.some((p) => path === p || path.startsWith(p + '/'))) {
           router.replace('/dashboard/my-dashboard');
         }

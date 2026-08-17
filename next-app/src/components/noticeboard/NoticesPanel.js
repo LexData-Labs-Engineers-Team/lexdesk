@@ -21,6 +21,17 @@ export default function NoticesPanel() {
   const [pinned, setPinned] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [busyId, setBusyId] = useState('');
+  // Employees and IT team read this page; only admins author. COSMETIC ONLY —
+  // the API is the real gate (POST /api/admin/notices and DELETE
+  // /api/admin/notices/[id] both 403 for non-admins). Hiding the form just keeps
+  // the read-only view honest. Lazy init (no set-state-in-effect).
+  const [canAuthor] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    try {
+      const r = JSON.parse(localStorage.getItem('user') || 'null')?.role;
+      return r === 'admin' || r === 'superadmin' || r === 'dev';
+    } catch { return false; }
+  });
 
   const load = useCallback(async () => {
     setError('');
@@ -71,12 +82,15 @@ export default function NoticesPanel() {
 
   return (
     <div className="flex flex-col gap-6">
-      <PageHeader title="Notice Board" subtitle="Announcements visible to every employee (web + app)" actions={
-        <button onClick={load} className="btn-outline py-2 px-4 text-sm">Refresh</button>
-      } />
+      <PageHeader
+        title="Notice Board"
+        subtitle={canAuthor ? 'Announcements visible to every employee (web + app)' : 'Announcements from your organization'}
+        actions={<button onClick={load} className="btn-outline py-2 px-4 text-sm">Refresh</button>}
+      />
 
       {error && <div className="card text-[var(--color-red)] text-sm">{error}</div>}
 
+      {canAuthor && (
       <form onSubmit={post} className="card flex flex-col gap-4">
         <h2 className="text-lg font-semibold text-[var(--color-text-main)]">Post a notice</h2>
         <div className="flex flex-col gap-1.5">
@@ -97,6 +111,7 @@ export default function NoticesPanel() {
           </button>
         </div>
       </form>
+      )}
 
       <div className="flex flex-col gap-3">
         {(notices || []).map((n) => (
@@ -109,9 +124,11 @@ export default function NoticesPanel() {
               {n.body && <p className="text-sm text-[var(--color-text-muted)] whitespace-pre-wrap">{n.body}</p>}
               <span className="text-xs text-[var(--color-text-muted)]">{fmt(n.createdAt)}</span>
             </div>
-            <button onClick={() => remove(n.id)} disabled={busyId === n.id} className="btn-outline py-1.5 px-3 text-xs disabled:opacity-50">
-              {busyId === n.id ? '…' : 'Delete'}
-            </button>
+            {canAuthor && (
+              <button onClick={() => remove(n.id)} disabled={busyId === n.id} className="btn-outline py-1.5 px-3 text-xs disabled:opacity-50">
+                {busyId === n.id ? '…' : 'Delete'}
+              </button>
+            )}
           </div>
         ))}
         {notices && notices.length === 0 && <div className="card text-[var(--color-text-muted)] text-sm">No notices yet.</div>}
